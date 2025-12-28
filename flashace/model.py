@@ -112,7 +112,7 @@ class EquivariantMixBlock(nn.Module):
         self.hidden_dim = hidden_dim
         self.irreps = irreps
         self.sh_irreps = o3.Irreps.spherical_harmonics(l_max)
-        self.sh = o3.SphericalHarmonics(l_max, normalize=True, normalization="component")
+        self.sh = o3.SphericalHarmonics(self.sh_irreps, normalize=True, normalization="component")
         self.tp = o3.FullyConnectedTensorProduct(
             self.irreps,
             self.sh_irreps,
