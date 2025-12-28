@@ -118,6 +118,7 @@ class EquivariantMixBlock(nn.Module):
             self.sh_irreps,
             self.irreps,
             internal_weights=False,
+            shared_weights=False,
         )
         self.radial_mlp = nn.Sequential(
             nn.Linear(1, radial_mlp_hidden),
