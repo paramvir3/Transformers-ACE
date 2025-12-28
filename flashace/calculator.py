@@ -89,7 +89,22 @@ class FlashACECalculator(Calculator):
         )
         
         # 4. Load Weights
-        self.model.load_state_dict(checkpoint['model_state_dict'], strict=False)
+        state_dict = checkpoint['model_state_dict']
+        model_state = self.model.state_dict()
+        filtered_state = {}
+        mismatched = []
+        for key, value in state_dict.items():
+            if key not in model_state:
+                continue
+            if model_state[key].shape != value.shape:
+                mismatched.append((key, tuple(value.shape), tuple(model_state[key].shape)))
+                continue
+            filtered_state[key] = value
+        if mismatched:
+            print("[FlashACE] Skipping mismatched checkpoint tensors:")
+            for key, old_shape, new_shape in mismatched:
+                print(f"  - {key}: checkpoint {old_shape} vs model {new_shape}")
+        self.model.load_state_dict(filtered_state, strict=False)
         self.model.to(self.device)
         self.model.eval()
 
