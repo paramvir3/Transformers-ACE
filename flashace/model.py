@@ -391,6 +391,11 @@ class FlashACE(nn.Module):
         ffn_hidden = self.transformer_ffn_hidden or self.attention_irreps.dim * 4
         if self.use_transformer:
             if self.transformer_scalar_only:
+                if self.hidden_dim % self.transformer_num_heads != 0:
+                    raise ValueError(
+                        "transformer_num_heads must divide hidden_dim when transformer_scalar_only=True "
+                        f"(hidden_dim={self.hidden_dim}, heads={self.transformer_num_heads})."
+                    )
                 scalar_ffn_hidden = self.transformer_ffn_hidden or self.hidden_dim * 4
                 self.layers = nn.ModuleList(
                     [
@@ -408,6 +413,12 @@ class FlashACE(nn.Module):
                     ]
                 )
             else:
+                if self.attention_irreps.dim % self.transformer_num_heads != 0:
+                    raise ValueError(
+                        "transformer_num_heads must divide attention_irreps.dim when transformer_scalar_only=False "
+                        f"(attention_dim={self.attention_irreps.dim}, heads={self.transformer_num_heads}). "
+                        "Adjust transformer_num_heads, l_max/hidden_dim, or enable transformer_scalar_only."
+                    )
                 self.layers = nn.ModuleList(
                     [
                         TransformerBlock(
