@@ -98,9 +98,14 @@ def plot_training_metrics(history, save_dir="plots"):
     epochs = np.arange(1, len(history.get("train_loss", [])) + 1)
 
     def _plot_series(y_train, y_val, ylabel, title, filename, logy=False):
+        y_train = np.asarray(y_train, dtype=float)
+        y_val = np.asarray(y_val, dtype=float)
+        mask = np.isfinite(y_train) & np.isfinite(y_val)
+        if not np.any(mask):
+            return
         plt.figure(figsize=(8, 6))
-        plt.plot(epochs, y_train, label="Train", linewidth=2)
-        plt.plot(epochs, y_val, label="Validation", linewidth=2, linestyle="--")
+        plt.plot(epochs[mask], y_train[mask], label="Train", linewidth=2)
+        plt.plot(epochs[mask], y_val[mask], label="Validation", linewidth=2, linestyle="--")
         plt.xlabel("Epochs", fontsize=12)
         plt.ylabel(ylabel, fontsize=12)
         plt.title(title, fontsize=14)

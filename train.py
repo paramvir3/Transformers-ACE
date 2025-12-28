@@ -540,6 +540,7 @@ def main():
         'train_stress_rmse': [],
         'val_stress_rmse': [],
     }
+    metrics_interval = max(1, int(config.get('metrics_interval', 1)))
 
     ckpt_interval = int(config.get('checkpoint_interval', 0) or 0)
     ckpt_latest = bool(config.get('checkpoint_latest', False))
@@ -580,9 +581,10 @@ def main():
     
     force_loss_ema = None
     for epoch in range(start_epoch, config['epochs']):
+        compute_metrics = ((epoch + 1) % metrics_interval == 0) or (epoch + 1 == config['epochs'])
         force_weight = _force_weight(epoch)
         model.train()
-        train_metrics = MetricTracker()
+        train_metrics = MetricTracker() if compute_metrics else None
         total_loss = 0.0
         total_items_seen = 0
 
@@ -681,7 +683,8 @@ def main():
 
                 with torch.no_grad():
                     pred_E_abs = p_E + baseline_energy(item['z'])
-                    train_metrics.update(pred_E_abs, p_F, p_S, item['t_E'], item['t_F'], item['t_S'], n_ats)
+                    if compute_metrics and train_metrics is not None:
+                        train_metrics.update(pred_E_abs, p_F, p_S, item['t_E'], item['t_F'], item['t_S'], n_ats)
                     if force_loss_ema is None:
                         force_loss_ema = loss_f.detach()
                     else:
@@ -715,59 +718,74 @@ def main():
                 scheduler.step()
 
         avg_train_loss = total_loss / max(1, total_items_seen)
-        tr_e, tr_f, tr_s, tr_f_mse, tr_f_mae = train_metrics.get_metrics()
-        history['train_loss'].append(avg_train_loss)
-        history['train_energy_mev'].append(tr_e)
-        history['train_force_rmse'].append(tr_f)
-        history['train_stress_rmse'].append(tr_s)
+        if compute_metrics and train_metrics is not None:
+            tr_e, tr_f, tr_s, tr_f_mse, tr_f_mae = train_metrics.get_metrics()
+            history['train_loss'].append(avg_train_loss)
+            history['train_energy_mev'].append(tr_e)
+            history['train_force_rmse'].append(tr_f)
+            history['train_stress_rmse'].append(tr_s)
+        else:
+            tr_e = tr_f = tr_s = tr_f_mse = tr_f_mae = float("nan")
+            history['train_loss'].append(float("nan"))
+            history['train_energy_mev'].append(float("nan"))
+            history['train_force_rmse'].append(float("nan"))
+            history['train_stress_rmse'].append(float("nan"))
 
         # Validation
-        model.eval()
-        val_metrics = MetricTracker()
-        val_loss_accum = 0.0
+        if compute_metrics:
+            model.eval()
+            val_metrics = MetricTracker()
+            val_loss_accum = 0.0
 
-        for batch in valid_loader:
-            for item in batch:
-                for k, v in item.items():
-                    if isinstance(v, torch.Tensor):
-                        item[k] = v.to(device, non_blocking=True)
+            for batch in valid_loader:
+                for item in batch:
+                    for k, v in item.items():
+                        if isinstance(v, torch.Tensor):
+                            item[k] = v.to(device, non_blocking=True)
 
-                # Keep grad tracking on so autograd can form forces/stresses; we
-                # still avoid higher-order graphs with ``create_graph=False``
-                # inside the model during validation.
-                with torch.autocast(device_type=device_type, dtype=amp_dtype, enabled=use_amp):
-                    stress_target = torch.norm(item['t_S']) > 1e-6
-                    p_E, p_F, p_S, _ = model(
-                        item,
-                        training=False,
-                        compute_stress=stress_target,
-                    )
-                    n_ats = len(item['z'])
-                    target_E = item['t_E'] - baseline_energy(item['z'])
-                    loss_e = ((p_E - target_E) / n_ats)**2
-                    loss_f = torch.mean((p_F - item['t_F'])**2)
-                    loss_s = torch.tensor(0.0, device=device)
-                    if stress_target:
-                        loss_s = torch.mean((p_S - item['t_S'])**2)
-                    val_loss_accum += (config['energy_weight']*loss_e) + (force_weight*loss_f) + (config['stress_weight']*loss_s)
+                    # Keep grad tracking on so autograd can form forces/stresses; we
+                    # still avoid higher-order graphs with ``create_graph=False``
+                    # inside the model during validation.
+                    with torch.autocast(device_type=device_type, dtype=amp_dtype, enabled=use_amp):
+                        stress_target = torch.norm(item['t_S']) > 1e-6
+                        p_E, p_F, p_S, _ = model(
+                            item,
+                            training=False,
+                            compute_stress=stress_target,
+                        )
+                        n_ats = len(item['z'])
+                        target_E = item['t_E'] - baseline_energy(item['z'])
+                        loss_e = ((p_E - target_E) / n_ats)**2
+                        loss_f = torch.mean((p_F - item['t_F'])**2)
+                        loss_s = torch.tensor(0.0, device=device)
+                        if stress_target:
+                            loss_s = torch.mean((p_S - item['t_S'])**2)
+                        val_loss_accum += (config['energy_weight']*loss_e) + (force_weight*loss_f) + (config['stress_weight']*loss_s)
 
-                pred_E_abs = p_E + baseline_energy(item['z'])
-                val_metrics.update(pred_E_abs, p_F, p_S, item['t_E'], item['t_F'], item['t_S'], n_ats)
+                    pred_E_abs = p_E + baseline_energy(item['z'])
+                    val_metrics.update(pred_E_abs, p_F, p_S, item['t_E'], item['t_F'], item['t_S'], n_ats)
 
-        avg_val_loss = val_loss_accum / len(val_atoms)
-        val_e, val_f, val_s, val_f_mse, val_f_mae = val_metrics.get_metrics()
-        history['val_loss'].append(avg_val_loss)
-        history['val_energy_mev'].append(val_e)
-        history['val_force_rmse'].append(val_f)
-        history['val_stress_rmse'].append(val_s)
+            avg_val_loss = val_loss_accum / len(val_atoms)
+            val_e, val_f, val_s, val_f_mse, val_f_mae = val_metrics.get_metrics()
+            history['val_loss'].append(avg_val_loss)
+            history['val_energy_mev'].append(val_e)
+            history['val_force_rmse'].append(val_f)
+            history['val_stress_rmse'].append(val_s)
+        else:
+            avg_val_loss = val_e = val_f = val_s = val_f_mse = val_f_mae = float("nan")
+            history['val_loss'].append(float("nan"))
+            history['val_energy_mev'].append(float("nan"))
+            history['val_force_rmse'].append(float("nan"))
+            history['val_stress_rmse'].append(float("nan"))
         if scheduler_interval == 'epoch':
             scheduler.step()
 
-        print(
-            f"{epoch+1:5d} | "
-            f"{avg_train_loss:10.4f} | {tr_e:10.2f} | {tr_f:12.6f} | {tr_f_mse:12.6f} | {tr_f_mae:12.6f} | {tr_s:10.4f} || "
-            f"{avg_val_loss:10.4f} | {val_e:10.2f} | {val_f:16.6f} | {val_f_mse:16.6f}"
-        )
+        if compute_metrics:
+            print(
+                f"{epoch+1:5d} | "
+                f"{avg_train_loss:10.4f} | {tr_e:10.2f} | {tr_f:12.6f} | {tr_f_mse:12.6f} | {tr_f_mae:12.6f} | {tr_s:10.4f} || "
+                f"{avg_val_loss:10.4f} | {val_e:10.2f} | {val_f:16.6f} | {val_f_mse:16.6f}"
+            )
 
         if ckpt_interval > 0 and (epoch + 1) % ckpt_interval == 0:
             ckpt_path = os.path.join(ckpt_dir, f"epoch_{epoch+1}.pt")

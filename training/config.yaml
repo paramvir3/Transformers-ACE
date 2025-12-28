@@ -78,6 +78,7 @@ checkpoint_latest: false         # Always save a rolling latest.pt checkpoint
 resume_latest: false             # Resume from checkpoint_dir/latest.pt if resume_from is unset
 resume_from: null                # Path to a checkpoint to resume from
 plot_dir: "plots"                # Directory for training metric plots
+metrics_interval: 1              # Compute/print metrics every N epochs
 resume_load_optimizer: false     # Load optimizer state when resuming
 resume_load_scheduler: false     # Load LR scheduler state when resuming
 resume_load_scaler: false        # Load AMP GradScaler state when resuming
