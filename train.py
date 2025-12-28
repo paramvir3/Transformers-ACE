@@ -269,6 +269,9 @@ def main():
 
     config, config_path = _load_config(args.config)
     print(f"--- Loading {config_path} ---")
+    print("--- Configuration ---")
+    print(yaml.safe_dump(config, sort_keys=True, default_flow_style=False).strip())
+    print("-" * 40)
     device = config['device']
     device_type = device.split(":")[0]
 
