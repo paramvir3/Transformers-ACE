@@ -27,6 +27,8 @@ node_update_mlp: false           # Apply per-block node MLP after attention
 equivariant_mix_per_layer: false # Apply equivariant tensor-product mixing at each layer
 edge_attention: false            # Use per-edge state to bias attention logits per layer
 edge_state_dim: null             # Edge embedding dimension (defaults to hidden_dim)
+equivariant_rms_norm: false      # Apply equivariant RMS norm per layer (Equiformer-style)
+equivariant_rms_norm_eps: 1e-8   # Epsilon for equivariant RMS norm
 readout_hidden_dims: [64, 32]    # MLP taper for readout (e.g., hidden_dim -> 64 -> 32 -> 1)
 transformer_num_heads: 4         # Multi-head attention heads for transformer blocks
 transformer_ffn_hidden: null     # Hidden width for FFN (defaults to 4x feature dim)

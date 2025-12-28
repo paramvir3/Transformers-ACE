@@ -154,6 +154,30 @@ class EquivariantMixBlock(nn.Module):
         agg = torch.cat([scalars, rest], dim=-1)
         return h + agg
 
+class IrrepRMSNorm(nn.Module):
+    """Equivariant RMS normalization (per irreps block) with learnable gain."""
+    def __init__(self, irreps: o3.Irreps, eps: float = 1e-8):
+        super().__init__()
+        self.irreps = irreps
+        self.eps = eps
+        self.slices = []
+        gains = []
+        cursor = 0
+        for mul, ir in self.irreps:
+            block_dim = mul * ir.dim
+            self.slices.append((cursor, cursor + block_dim))
+            gains.append(nn.Parameter(torch.ones(block_dim)))
+            cursor += block_dim
+        self.gains = nn.ParameterList(gains)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        outputs = []
+        for (start, end), gain in zip(self.slices, self.gains):
+            block = x[..., start:end]
+            rms = block.pow(2).mean(dim=-1, keepdim=True).add(self.eps).sqrt()
+            outputs.append(block / rms * gain)
+        return torch.cat(outputs, dim=-1)
+
 class TransformerBlock(nn.Module):
     """Full transformer block with pre-norm attention and FFN on all channels."""
     def __init__(
@@ -309,6 +333,8 @@ class FlashACE(nn.Module):
         equivariant_mix_per_layer: bool = False,
         edge_state_dim: int | None = None,
         edge_attention: bool = False,
+        equivariant_rms_norm: bool = False,
+        equivariant_rms_norm_eps: float = 1e-8,
         readout_hidden_dims: list[int] | None = None,
     ):
         super().__init__()
@@ -339,6 +365,8 @@ class FlashACE(nn.Module):
         self.equivariant_mix_per_layer = bool(equivariant_mix_per_layer)
         self.edge_attention = bool(edge_attention)
         self.edge_state_dim = edge_state_dim or hidden_dim
+        self.equivariant_rms_norm = bool(equivariant_rms_norm)
+        self.equivariant_rms_norm_eps = float(equivariant_rms_norm_eps)
         self.readout_hidden_dims = readout_hidden_dims
         self.node_scalar_irreps = o3.Irreps(f"{hidden_dim}x0e")
 
@@ -377,6 +405,11 @@ class FlashACE(nn.Module):
                 for _ in range(num_layers)
             ]
             if self.equivariant_mix_per_layer
+            else []
+        )
+        self.eq_norms = nn.ModuleList(
+            [IrrepRMSNorm(self.attention_irreps, eps=self.equivariant_rms_norm_eps) for _ in range(num_layers)]
+            if self.equivariant_rms_norm
             else []
         )
         self.edge_state_init = None
@@ -568,6 +601,8 @@ class FlashACE(nn.Module):
                     attn_mask_short[edge_index[0][short_edges], edge_index[1][short_edges]] = False
 
         for idx, layer in enumerate(self.layers):
+            if self.equivariant_rms_norm and len(self.eq_norms) > 0:
+                h = self.eq_norms[idx](h)
             if self.interleave_descriptor:
                 scalars = h[..., : self.hidden_dim]
                 desc = self.ace(scalars, edge_index, edge_vec, edge_len)
