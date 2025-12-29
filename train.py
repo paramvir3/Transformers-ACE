@@ -263,6 +263,7 @@ def atomic_energy_tensor(energy_table, device):
     return tensor
 
 def main():
+    torch.multiprocessing.set_sharing_strategy("file_system")
     parser = argparse.ArgumentParser(description="Train Flash-ACE")
     parser.add_argument("--config", "-c", default=None, help="Path to YAML config file")
     args = parser.parse_args()
