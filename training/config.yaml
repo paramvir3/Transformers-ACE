@@ -70,6 +70,7 @@ clip_grad_norm: 1.0
 use_amp: true                    # Enable mixed precision on CUDA for speed
 amp_dtype: "bfloat16"            # Prefer bf16 for stability; use float16 if unavailable
 sdp_backend: "math"              # CUDA SDP backend: auto, flash, mem_efficient, math
+use_data_parallel: false         # Enable torch.nn.DataParallel when multiple GPUs are available
 grad_accum_steps: 1              # Gradient accumulation steps before optimizer step
 precompute_neighbors: true       # Cache neighbor lists to cut CPU overhead
 random_rotation: false           # Apply random SO(3) rotations per batch item

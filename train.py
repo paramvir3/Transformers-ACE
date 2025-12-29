@@ -413,6 +413,9 @@ def main():
         use_aux_force_head=config.get('use_aux_force_head', True),
         use_aux_stress_head=config.get('use_aux_stress_head', True),
     ).to(device)
+    use_data_parallel = bool(config.get('use_data_parallel', False))
+    if use_data_parallel and device_type == "cuda" and torch.cuda.device_count() > 1:
+        model = torch.nn.DataParallel(model)
     
     optimizer = optim.Adam(
         model.parameters(), lr=config['learning_rate'], amsgrad=True,
