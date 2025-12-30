@@ -369,12 +369,23 @@ def main():
     )
 
     # Reduced workers to prevent CPU overhead issues
-    train_loader = DataLoader(train_ds, batch_size=config['batch_size'], 
-                              collate_fn=AtomisticDataset.collate_fn, shuffle=True,
-                              num_workers=2, pin_memory=True)
+    num_workers = int(config.get('dataloader_num_workers', 2))
+    pin_memory = bool(config.get('dataloader_pin_memory', device_type == "cuda"))
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=config['batch_size'],
+        collate_fn=AtomisticDataset.collate_fn,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+    )
     
-    valid_loader = DataLoader(val_ds, batch_size=config['batch_size'], 
-                              collate_fn=AtomisticDataset.collate_fn, num_workers=2)
+    valid_loader = DataLoader(
+        val_ds,
+        batch_size=config['batch_size'],
+        collate_fn=AtomisticDataset.collate_fn,
+        num_workers=num_workers,
+    )
 
     print("--- Initializing FlashACE ---")
     model = FlashACE(

@@ -75,6 +75,8 @@ grad_accum_steps: 1              # Gradient accumulation steps before optimizer 
 precompute_neighbors: true       # Cache neighbor lists to cut CPU overhead
 random_rotation: false           # Apply random SO(3) rotations per batch item
 device: "cuda"
+dataloader_num_workers: 2        # DataLoader worker processes (0 avoids shared memory issues)
+dataloader_pin_memory: true      # Pin CPU memory for faster host->device copies
 checkpoint_dir: "checkpoints"     # Directory to stash periodic checkpoints
 checkpoint_interval: 10          # Save a checkpoint every N epochs (0 disables)
 checkpoint_latest: false         # Always save a rolling latest.pt checkpoint
