@@ -428,8 +428,11 @@ def main():
         use_aux_stress_head=config.get('use_aux_stress_head', True),
     ).to(device)
     use_data_parallel = bool(config.get('use_data_parallel', False))
-    if use_data_parallel and device_type == "cuda" and torch.cuda.device_count() > 1:
-        model = torch.nn.DataParallel(model)
+    if use_data_parallel:
+        raise ValueError(
+            "use_data_parallel=True is not supported with the current variable-size per-structure batching. "
+            "Disable use_data_parallel or switch to DistributedDataParallel with a per-rank batch."
+        )
     
     optimizer = optim.Adam(
         model.parameters(), lr=config['learning_rate'], amsgrad=True,
