@@ -825,13 +825,6 @@ def main():
                 f"{avg_val_loss:10.4f} | {val_e:10.2f} | {val_f:16.6f} | {val_f_mse:16.6f}",
                 flush=True,
             )
-        else:
-            print(
-                f"{epoch+1:5d} | {avg_train_loss:10.4f} | "
-                f"{'metrics skipped':>10} | {'-':>12} | {'-':>12} | {'-':>12} | {'-':>10} || "
-                f"{'metrics skipped':>10} | {'-':>10} | {'-':>16} | {'-':>16}",
-                flush=True,
-            )
 
         if ckpt_interval > 0 and (epoch + 1) % ckpt_interval == 0:
             ckpt_path = os.path.join(ckpt_dir, f"epoch_{epoch+1}.pt")
