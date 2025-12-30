@@ -91,16 +91,33 @@ def save_checkpoint(path, epoch, model, optimizer, scheduler, scaler, config, en
     print(f"Saved checkpoint to {path}")
 
 class AtomisticDataset(Dataset):
-    def __init__(self, atoms_list, r_max, random_rotation=False, precompute_neighbors=False):
+    def __init__(
+        self,
+        atoms_list,
+        r_max,
+        random_rotation=False,
+        precompute_neighbors=False,
+        precompute_log_interval=0,
+    ):
         self.atoms_list = atoms_list
         self.r_max = r_max
         self.random_rotation = random_rotation
         self.precompute_neighbors = precompute_neighbors
+        self.precompute_log_interval = max(0, int(precompute_log_interval))
 
         self._edge_cache = None
         if precompute_neighbors:
             self._edge_cache = []
+            total = len(atoms_list)
+            if total:
+                print(f"Precomputing neighbor lists for {total} structures...")
             for atoms in atoms_list:
+                if (
+                    self.precompute_log_interval > 0
+                    and len(self._edge_cache) > 0
+                    and len(self._edge_cache) % self.precompute_log_interval == 0
+                ):
+                    print(f"  precomputed {len(self._edge_cache)}/{total} neighbor lists")
                 i, j = neighbor_list('ij', atoms, self.r_max)
                 edge_index = torch.stack(
                     [torch.tensor(i, dtype=torch.long), torch.tensor(j, dtype=torch.long)], dim=0
@@ -360,12 +377,14 @@ def main():
         config['r_max'],
         random_rotation=config.get('random_rotation', False),
         precompute_neighbors=config.get('precompute_neighbors', False),
+        precompute_log_interval=config.get('precompute_neighbors_log_interval', 0),
     )
     val_ds = AtomisticDataset(
         val_atoms,
         config['r_max'],
         random_rotation=False,
         precompute_neighbors=config.get('precompute_neighbors', False),
+        precompute_log_interval=config.get('precompute_neighbors_log_interval', 0),
     )
 
     # Reduced workers to prevent CPU overhead issues

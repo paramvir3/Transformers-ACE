@@ -73,6 +73,7 @@ sdp_backend: "math"              # CUDA SDP backend: auto, flash, mem_efficient,
 use_data_parallel: false         # DataParallel is not supported with variable-size per-structure batches
 grad_accum_steps: 1              # Gradient accumulation steps before optimizer step
 precompute_neighbors: true       # Cache neighbor lists to cut CPU overhead
+precompute_neighbors_log_interval: 0 # Log every N precomputed neighbor lists (0 disables)
 random_rotation: false           # Apply random SO(3) rotations per batch item
 device: "cuda"
 dataloader_num_workers: 0        # DataLoader worker processes (0 avoids shared memory issues)
