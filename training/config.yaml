@@ -6,6 +6,8 @@
 train_file: "data_2.extxyz"    # Your full dataset
 valid_file: null                  # Leave null to use random split
 val_split: 0.1                    # 10% of data used for validation (randomly selected)
+split_seed: 42                    # RNG seed for train/val splitting
+stratified_val_bins: 0           # >0 enables energy-stratified split with N bins
 model_save_path: "model.pt"
 
 # ------------------------------------------------------------------------------
@@ -16,10 +18,38 @@ l_max: 1
 num_radial: 12
 hidden_dim: 128
 num_layers: 2
+descriptor_passes: 1            # Number of ACE descriptor iterations before attention
+descriptor_residual: true       # Add descriptor outputs residually across passes
+message_passing_layers: 0        # Optional scalar-only message passing steps before attention
+interleave_descriptor: false     # Refresh descriptor between attention blocks
+edge_update_per_layer: false     # Apply a scalar edge update before each attention block
+node_update_mlp: false           # Apply per-block node MLP after attention
+equivariant_mix_per_layer: false # Apply equivariant tensor-product mixing at each layer
+edge_attention: false            # Use per-edge state to bias attention logits per layer
+edge_state_dim: null             # Edge embedding dimension (defaults to hidden_dim)
+equivariant_rms_norm: false      # Apply equivariant RMS norm per layer (Equiformer-style)
+equivariant_rms_norm_eps: 1e-8   # Epsilon for equivariant RMS norm
+readout_hidden_dims: [64, 32]    # MLP taper for readout (e.g., hidden_dim -> 64 -> 32 -> 1)
+use_equiformer_v2: false         # Use ACE descriptor + EquiformerV2-style equivariant blocks (disables transformer)
+transformer_num_heads: 4         # Multi-head attention heads for transformer blocks
+transformer_ffn_hidden: null     # Hidden width for FFN (defaults to 4x feature dim)
+transformer_dropout: 0.0         # Dropout in transformer attention/FFN
+transformer_residual_dropout: 0.0 # Residual dropout for attention/FFN outputs
+transformer_ffn_gated: false     # Use a gated FFN (SwiGLU-style) instead of plain MLP
+transformer_layer_scale_init: null # Optional layer-scale init (e.g., 1e-4) for deep stacks
+transformer_attention_chunk_size: null # Chunked attention over nodes to reduce memory (null = full)
+use_transformer: true            # Enable transformer blocks (disable to rely on message passing only)
+transformer_scalar_only: false   # Apply transformer attention only on scalar channels
+attention_neighbor_mask: false   # Restrict attention to neighbor edges and self
+attention_short_range: false     # Run a second short-range attention pass and fuse
+attention_short_range_ratio: 0.5 # Short-range cutoff ratio of r_max (0-1]
+attention_short_range_gate: true # Gate short vs long attention outputs per node
 radial_basis_type: "bessel"       # Options: bessel, gaussian
 radial_trainable: false           # Make radial frequencies/centers learnable
 envelope_exponent: 5              # Polynomial cutoff exponent (higher = steeper)
 gaussian_width: 0.5              # Relative Gaussian width multiplier (only used if basis=gaussian)
+radial_mlp_hidden: 64           # Hidden width for the radial mixing MLP
+radial_mlp_layers: 2            # Layers for the radial mixing MLP
 
 # ------------------------------------------------------------------------------
 # 3. TRAINING PARAMETERS
@@ -30,19 +60,31 @@ batch_size: 8
 learning_rate: 0.002             # Slightly higher to emphasize force updates
 # Optional optimizer and scheduler tweaks
 weight_decay: 0.0
-lr_scheduler_factor: 0.5
-lr_scheduler_patience: 6         # Faster LR reductions if plateaus
+lr_scheduler_t_max: 300          # Epochs for one cosine cycle (defaults to total epochs)
+lr_warmup_epochs: 0              # Linear warmup steps before cosine annealing
+lr_warmup_start_factor: 0.1      # Starting LR factor for warmup (fraction of base LR, must be > 0)
+lr_scheduler_interval: "epoch"   # Apply LR schedule per 'epoch' or per 'step' for faster ramping
+lr_scheduler_use_restarts: false # Use cosine annealing with warm restarts instead of a single cycle
+lr_restart_mult: 1.0             # Restart period multiplier for CosineAnnealingWarmRestarts
 lr_min: 0.00005
 clip_grad_norm: 1.0
 use_amp: true                    # Enable mixed precision on CUDA for speed
 amp_dtype: "bfloat16"            # Prefer bf16 for stability; use float16 if unavailable
+sdp_backend: "math"              # CUDA SDP backend: auto, flash, mem_efficient, math
 grad_accum_steps: 1              # Gradient accumulation steps before optimizer step
 precompute_neighbors: true       # Cache neighbor lists to cut CPU overhead
+precompute_neighbors_log_interval: 0 # Log every N precomputed neighbor lists (0 disables)
 random_rotation: false           # Apply random SO(3) rotations per batch item
 device: "cuda"
+dataloader_num_workers: 0        # DataLoader worker processes (0 avoids shared memory issues)
+dataloader_pin_memory: false     # Pin CPU memory for faster host->device copies
 checkpoint_dir: "checkpoints"     # Directory to stash periodic checkpoints
-checkpoint_interval: 0           # Save a checkpoint every N epochs (0 disables)
+checkpoint_interval: 10          # Save a checkpoint every N epochs (0 disables)
+checkpoint_latest: false         # Always save a rolling latest.pt checkpoint
+resume_latest: false             # Resume from checkpoint_dir/latest.pt if resume_from is unset
 resume_from: null                # Path to a checkpoint to resume from
+plot_dir: "plots"                # Directory for training metric plots
+metrics_interval: 1              # Compute/print metrics every N epochs
 resume_load_optimizer: false     # Load optimizer state when resuming
 resume_load_scheduler: false     # Load LR scheduler state when resuming
 resume_load_scaler: false        # Load AMP GradScaler state when resuming
@@ -56,6 +98,8 @@ solve_atomic_energies: false      # Fit species reference energies from the trai
 # ------------------------------------------------------------------------------
 energy_weight: 1.0
 forces_weight: 10.0              # Emphasize forces early
+forces_weight_final: 10.0        # Optional target force weight to anneal toward
+forces_weight_decay_epochs: 0    # Epochs to linearly decay force weight (0 = no decay)
 stress_weight: 0.0               # Disable unless stresses are critical
 
 # Auxiliary and regularization weights
@@ -70,9 +114,6 @@ displacement_prob: 0.1
 displacement_sigma: 0.02
 
 # Attention controls
-attention_message_clip: 8.0
-attention_conditioned_decay: true
-attention_share_qkv: "kv"        # Share KV across heads for stability
 temperature_scale_start: 1.3
 temperature_scale_end: 1.0
 temperature_scale_epochs: 15

@@ -24,7 +24,7 @@ class FlashACECalculator(Calculator):
 
         # 2. Load Model & Config
         try:
-            checkpoint = torch.load(model_path, map_location=self.device)
+            checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
         except FileNotFoundError:
             raise FileNotFoundError(f"Model file not found: {model_path}")
 
@@ -57,15 +57,55 @@ class FlashACECalculator(Calculator):
             radial_trainable=conf.get('radial_trainable', False),
             envelope_exponent=conf.get('envelope_exponent', 5),
             gaussian_width=conf.get('gaussian_width', 0.5),
-            attention_message_clip=conf.get('attention_message_clip', None),
-            attention_conditioned_decay=conf.get('attention_conditioned_decay', True),
-            attention_share_qkv=conf.get('attention_share_qkv', "none"),
+            transformer_num_heads=conf.get('transformer_num_heads', 4),
+            transformer_ffn_hidden=conf.get('transformer_ffn_hidden', None),
+            transformer_dropout=conf.get('transformer_dropout', 0.0),
+            transformer_residual_dropout=conf.get('transformer_residual_dropout', 0.0),
+            transformer_ffn_gated=conf.get('transformer_ffn_gated', False),
+            transformer_layer_scale_init=conf.get('transformer_layer_scale_init', None),
+            transformer_attention_chunk_size=conf.get('transformer_attention_chunk_size', None),
+            use_transformer=conf.get('use_transformer', True),
+            transformer_scalar_only=conf.get('transformer_scalar_only', False),
+            attention_neighbor_mask=conf.get('attention_neighbor_mask', False),
+            attention_short_range=conf.get('attention_short_range', False),
+            attention_short_range_ratio=conf.get('attention_short_range_ratio', 0.5),
+            attention_short_range_gate=conf.get('attention_short_range_gate', True),
+            descriptor_passes=conf.get('descriptor_passes', 1),
+            descriptor_residual=conf.get('descriptor_residual', True),
+            radial_mlp_hidden=conf.get('radial_mlp_hidden', 64),
+            radial_mlp_layers=conf.get('radial_mlp_layers', 2),
+            message_passing_layers=conf.get('message_passing_layers', 0),
+            interleave_descriptor=conf.get('interleave_descriptor', False),
+            edge_update_per_layer=conf.get('edge_update_per_layer', False),
+            node_update_mlp=conf.get('node_update_mlp', False),
+            equivariant_mix_per_layer=conf.get('equivariant_mix_per_layer', False),
+            edge_state_dim=conf.get('edge_state_dim', None),
+            edge_attention=conf.get('edge_attention', False),
+            equivariant_rms_norm=conf.get('equivariant_rms_norm', False),
+            equivariant_rms_norm_eps=conf.get('equivariant_rms_norm_eps', 1e-8),
+            readout_hidden_dims=conf.get('readout_hidden_dims', None),
+            use_equiformer_v2=conf.get('use_equiformer_v2', False),
             use_aux_force_head=conf.get('use_aux_force_head', False),
             use_aux_stress_head=conf.get('use_aux_stress_head', False),
         )
         
         # 4. Load Weights
-        self.model.load_state_dict(checkpoint['model_state_dict'], strict=False)
+        state_dict = checkpoint['model_state_dict']
+        model_state = self.model.state_dict()
+        filtered_state = {}
+        mismatched = []
+        for key, value in state_dict.items():
+            if key not in model_state:
+                continue
+            if model_state[key].shape != value.shape:
+                mismatched.append((key, tuple(value.shape), tuple(model_state[key].shape)))
+                continue
+            filtered_state[key] = value
+        if mismatched:
+            print("[FlashACE] Skipping mismatched checkpoint tensors:")
+            for key, old_shape, new_shape in mismatched:
+                print(f"  - {key}: checkpoint {old_shape} vs model {new_shape}")
+        self.model.load_state_dict(filtered_state, strict=False)
         self.model.to(self.device)
         self.model.eval()
 
