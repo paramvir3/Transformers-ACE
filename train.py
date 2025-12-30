@@ -371,6 +371,8 @@ def main():
     # Reduced workers to prevent CPU overhead issues
     num_workers = int(config.get('dataloader_num_workers', 2))
     pin_memory = bool(config.get('dataloader_pin_memory', device_type == "cuda"))
+    if num_workers == 0:
+        pin_memory = False
     train_loader = DataLoader(
         train_ds,
         batch_size=config['batch_size'],
