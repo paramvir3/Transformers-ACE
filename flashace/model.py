@@ -447,12 +447,12 @@ class InvariantPointAttentionBlock(nn.Module):
         attn_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         x = self.norm1(h)
-        q = self.q(x).view(-1, self.num_heads, self.head_dim)
-        k = self.k(x).view(-1, self.num_heads, self.head_dim)
-        v = self.v(x).view(-1, self.num_heads, self.head_dim)
-        q_pts = self.q_pts(x).view(-1, self.num_heads, self.num_points, 3)
-        k_pts = self.k_pts(x).view(-1, self.num_heads, self.num_points, 3)
-        v_pts = self.v_pts(x).view(-1, self.num_heads, self.num_points, 3)
+        q = self.q(x).reshape(-1, self.num_heads, self.head_dim)
+        k = self.k(x).reshape(-1, self.num_heads, self.head_dim)
+        v = self.v(x).reshape(-1, self.num_heads, self.head_dim)
+        q_pts = self.q_pts(x).reshape(-1, self.num_heads, self.num_points, 3)
+        k_pts = self.k_pts(x).reshape(-1, self.num_heads, self.num_points, 3)
+        v_pts = self.v_pts(x).reshape(-1, self.num_heads, self.num_points, 3)
 
         attn_logits = torch.einsum("ihd,jhd->hij", q, k) / (self.head_dim ** 0.5)
         diff = q_pts[:, :, None, :, :] - k_pts[None, :, :, :, :]
