@@ -456,8 +456,10 @@ class InvariantPointAttentionBlock(nn.Module):
         v_pts = self.v_pts(x).reshape(n_nodes, self.num_heads, self.num_points, 3)
 
         attn_logits = torch.einsum("ihd,jhd->hij", q, k) / (self.head_dim ** 0.5)
-        diff = q_pts[:, :, None, :, :] - k_pts[None, :, :, :, :]
-        dist2 = (diff ** 2).sum(dim=(-1, -2)).permute(1, 0, 2)
+        q_pts_h = q_pts.permute(1, 0, 2, 3)
+        k_pts_h = k_pts.permute(1, 0, 2, 3)
+        diff = q_pts_h[:, :, None, :, :] - k_pts_h[:, None, :, :, :]
+        dist2 = (diff ** 2).sum(dim=(-1, -2))
         attn_logits = attn_logits - 0.5 * dist2
         if attn_mask is not None:
             if attn_mask.dtype == torch.bool:
