@@ -467,9 +467,9 @@ class InvariantPointAttentionBlock(nn.Module):
 
         attn = torch.softmax(attn_logits, dim=-1)
         attn = self.dropout(attn)
-        out = torch.einsum("hij,jhd->ihd", attn, v).reshape(-1, self.scalar_dim)
+        out = torch.einsum("hij,jhd->ihd", attn, v).reshape(n_nodes, self.scalar_dim)
         out_pts = torch.einsum("hij,jhpd->ihpd", attn, v_pts).reshape(
-            -1, self.num_heads * self.num_points * 3
+            n_nodes, self.num_heads * self.num_points * 3
         )
         out = self.attn_out(out) + self.point_out(out_pts)
         if self.layer_scale_attn is not None:
