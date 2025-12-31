@@ -190,6 +190,8 @@ class MetricTracker:
         self.sse_e = 0.0; self.sse_s = 0.0
         self.sum_force_mse = 0.0
         self.sum_force_mae = 0.0
+        self.sum_force_sse = 0.0
+        self.n_force_comp = 0
         self.n_atoms = 0; self.n_stress_comp = 0; self.n_struct = 0
     def update(self, p_E, p_F, p_S, t_E, t_F, t_S, n_ats):
         err_e = (p_E - t_E).item() / n_ats
@@ -200,6 +202,9 @@ class MetricTracker:
         force_mae = diff_f.abs().mean().item()
         self.sum_force_mse += force_mse
         self.sum_force_mae += force_mae
+        # Global per-atom force SSE for dataset-level RMSE.
+        self.sum_force_sse += diff_f.pow(2).sum().item()
+        self.n_force_comp += diff_f.numel()
         self.n_struct += 1
         if torch.norm(t_S) > 1e-6:
              self.sse_s += (p_S - t_S).pow(2).sum().item()
@@ -208,7 +213,8 @@ class MetricTracker:
     def get_metrics(self):
         rmse_e = np.sqrt(self.sse_e / self.n_atoms) if self.n_atoms > 0 else 0.0
         rmse_s = np.sqrt(self.sse_s / self.n_stress_comp) if self.n_stress_comp > 0 else 0.0
-        force_mse = (self.sum_force_mse / self.n_struct) if self.n_struct > 0 else 0.0
+        # Global per-atom force RMSE (preferred for tracking).
+        force_mse = (self.sum_force_sse / self.n_force_comp) if self.n_force_comp > 0 else 0.0
         force_mae = (self.sum_force_mae / self.n_struct) if self.n_struct > 0 else 0.0
         force_rmse = np.sqrt(force_mse)
         return rmse_e * 1000, force_rmse, rmse_s, force_mse, force_mae
