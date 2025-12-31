@@ -104,6 +104,7 @@ forces_weight: 10.0              # Emphasize forces early
 forces_weight_final: 10.0        # Optional target force weight to anneal toward
 forces_weight_decay_epochs: 0    # Epochs to linearly decay force weight (0 = no decay)
 stress_weight: 0.0               # Disable unless stresses are critical
+force_only_epochs: 0            # Train with force loss only for N initial epochs
 
 # Auxiliary and regularization weights
 aux_force_weight: 0.1            # Small multi-task force head weight

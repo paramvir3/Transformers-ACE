@@ -619,6 +619,7 @@ def main():
     aux_stress_weight = float(config.get('aux_stress_weight', 0.0))
     sobolev_weight = float(config.get('sobolev_weight', 0.0))
     sobolev_sigma = float(config.get('sobolev_sigma', 0.0))
+    force_only_epochs = int(config.get('force_only_epochs', 0))
     
     print(
         f"{'Epoch':>5} | {'Loss':>10} | {'E (meV)':>10} | {'force_RMSE':>12} | {'force_MSE':>12} | {'force_MAE':>12} | {'S_RMSE':>10} || "
@@ -631,6 +632,12 @@ def main():
     for epoch in range(start_epoch, config['epochs']):
         compute_metrics = ((epoch + 1) % metrics_interval == 0) or (epoch + 1 == config['epochs'])
         force_weight = _force_weight(epoch)
+        if force_only_epochs > 0 and epoch < force_only_epochs:
+            energy_weight = 0.0
+            stress_weight = 0.0
+        else:
+            energy_weight = config['energy_weight']
+            stress_weight = config['stress_weight']
         model.train()
         train_metrics = MetricTracker() if compute_metrics else None
         total_loss = 0.0
@@ -683,9 +690,9 @@ def main():
                     if torch.norm(item['t_S']) > 1e-6:
                         loss_s = torch.mean((p_S - item['t_S'])**2)
 
-                    loss_item = (config['energy_weight']*loss_e) + \
+                    loss_item = (energy_weight*loss_e) + \
                                 (force_weight*loss_f) + \
-                                (config['stress_weight']*loss_s)
+                                (stress_weight*loss_s)
 
                     if aux_force_weight > 0.0 and 'force' in aux:
                         loss_item = loss_item + aux_force_weight * torch.mean((aux['force'] - item['t_F'])**2)
