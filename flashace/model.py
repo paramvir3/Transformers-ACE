@@ -898,13 +898,15 @@ class FlashACE(nn.Module):
                             h.dtype,
                             h.device,
                         )
-                        long_out = layer(h, pos, attn_mask=long_bias)
-                        short_out = layer(h, pos, attn_mask=short_bias)
+                        scalars, rest = h[..., : self.hidden_dim], h[..., self.hidden_dim :]
+                        long_out = layer(scalars, pos, attn_mask=long_bias)
+                        short_out = layer(scalars, pos, attn_mask=short_bias)
                         if self.short_range_gate is None:
-                            h = 0.5 * (short_out + long_out)
+                            scalars = 0.5 * (short_out + long_out)
                         else:
-                            gate = self.short_range_gate(h[..., : self.hidden_dim])
-                            h = gate * short_out + (1.0 - gate) * long_out
+                            gate = self.short_range_gate(scalars)
+                            scalars = gate * short_out + (1.0 - gate) * long_out
+                        h = torch.cat([scalars, rest], dim=-1)
                     else:
                         attn_bias = self._build_attention_bias(
                             h.shape[0],
@@ -914,7 +916,9 @@ class FlashACE(nn.Module):
                             h.dtype,
                             h.device,
                         )
-                        h = layer(h, pos, attn_mask=attn_bias)
+                        scalars, rest = h[..., : self.hidden_dim], h[..., self.hidden_dim :]
+                        scalars = layer(scalars, pos, attn_mask=attn_bias)
+                        h = torch.cat([scalars, rest], dim=-1)
                     if self.node_update_mlp and len(self.node_updates) > 0:
                         h = self.node_updates[idx](h)
             else:
