@@ -444,6 +444,9 @@ def main():
         equivariant_rms_norm_eps=config.get('equivariant_rms_norm_eps', 1e-8),
         readout_hidden_dims=config.get('readout_hidden_dims', None),
         use_equiformer_v2=config.get('use_equiformer_v2', False),
+        equiformer_use_scalar_mlp=config.get('equiformer_use_scalar_mlp', True),
+        equiformer_scalar_mlp_hidden=config.get('equiformer_scalar_mlp_hidden', 128),
+        equiformer_scalar_mlp_layers=config.get('equiformer_scalar_mlp_layers', 2),
         use_aux_force_head=config.get('use_aux_force_head', True),
         use_aux_stress_head=config.get('use_aux_stress_head', True),
     ).to(device)

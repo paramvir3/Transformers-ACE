@@ -198,6 +198,9 @@ class EquiformerV2Block(nn.Module):
         radial_mlp_hidden: int,
         radial_mlp_layers: int,
         rms_eps: float,
+        scalar_mlp_hidden: int,
+        scalar_mlp_layers: int,
+        use_scalar_mlp: bool,
     ):
         super().__init__()
         self.hidden_dim = hidden_dim
@@ -225,6 +228,16 @@ class EquiformerV2Block(nn.Module):
                 nn.Linear(hidden_dim, non_scalar_dim),
                 nn.Sigmoid(),
             )
+        self.use_scalar_mlp = use_scalar_mlp
+        self.scalar_norm = nn.LayerNorm(hidden_dim)
+        self.scalar_mlp = None
+        if self.use_scalar_mlp:
+            self.scalar_mlp = _make_mlp(
+                in_dim=hidden_dim,
+                hidden_dim=scalar_mlp_hidden,
+                out_dim=hidden_dim,
+                depth=scalar_mlp_layers,
+            )
 
     def forward(
         self,
@@ -246,7 +259,12 @@ class EquiformerV2Block(nn.Module):
         if self.gate is not None and rest.numel() > 0:
             gate = self.gate(h[..., : self.hidden_dim])
             rest = rest * gate
-        return h + torch.cat([scalars, rest], dim=-1)
+        h = h + torch.cat([scalars, rest], dim=-1)
+        if self.use_scalar_mlp and self.scalar_mlp is not None:
+            scalars, rest = h[..., : self.hidden_dim], h[..., self.hidden_dim :]
+            scalars = scalars + self.scalar_mlp(self.scalar_norm(scalars))
+            h = torch.cat([scalars, rest], dim=-1)
+        return h
 
 class TransformerBlock(nn.Module):
     """Full transformer block with pre-norm attention and FFN on all channels."""
@@ -407,6 +425,9 @@ class FlashACE(nn.Module):
         equivariant_rms_norm_eps: float = 1e-8,
         readout_hidden_dims: list[int] | None = None,
         use_equiformer_v2: bool = False,
+        equiformer_use_scalar_mlp: bool = True,
+        equiformer_scalar_mlp_hidden: int = 128,
+        equiformer_scalar_mlp_layers: int = 2,
     ):
         super().__init__()
         self.hidden_dim = hidden_dim
@@ -440,6 +461,9 @@ class FlashACE(nn.Module):
         self.equivariant_rms_norm_eps = float(equivariant_rms_norm_eps)
         self.readout_hidden_dims = readout_hidden_dims
         self.use_equiformer_v2 = bool(use_equiformer_v2)
+        self.equiformer_use_scalar_mlp = bool(equiformer_use_scalar_mlp)
+        self.equiformer_scalar_mlp_hidden = int(equiformer_scalar_mlp_hidden)
+        self.equiformer_scalar_mlp_layers = int(equiformer_scalar_mlp_layers)
         self.node_scalar_irreps = o3.Irreps(f"{hidden_dim}x0e")
 
         self.emb = nn.Embedding(118, hidden_dim)
@@ -493,6 +517,9 @@ class FlashACE(nn.Module):
                     radial_mlp_hidden,
                     radial_mlp_layers,
                     self.equivariant_rms_norm_eps,
+                    self.equiformer_scalar_mlp_hidden,
+                    self.equiformer_scalar_mlp_layers,
+                    self.equiformer_use_scalar_mlp,
                 )
                 for _ in range(num_layers)
             ]

@@ -31,6 +31,9 @@ equivariant_rms_norm: false      # Apply equivariant RMS norm per layer (Equifor
 equivariant_rms_norm_eps: 1e-8   # Epsilon for equivariant RMS norm
 readout_hidden_dims: [64, 32]    # MLP taper for readout (e.g., hidden_dim -> 64 -> 32 -> 1)
 use_equiformer_v2: false         # Use ACE descriptor + EquiformerV2-style equivariant blocks (disables transformer)
+equiformer_use_scalar_mlp: true  # Add scalar-only MLP updates inside EquiformerV2 blocks
+equiformer_scalar_mlp_hidden: 128 # Hidden width for EquiformerV2 scalar MLP
+equiformer_scalar_mlp_layers: 2  # Layer count for EquiformerV2 scalar MLP
 transformer_num_heads: 4         # Multi-head attention heads for transformer blocks
 transformer_ffn_hidden: null     # Hidden width for FFN (defaults to 4x feature dim)
 transformer_dropout: 0.0         # Dropout in transformer attention/FFN

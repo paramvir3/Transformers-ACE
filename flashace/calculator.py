@@ -85,6 +85,9 @@ class FlashACECalculator(Calculator):
             equivariant_rms_norm_eps=conf.get('equivariant_rms_norm_eps', 1e-8),
             readout_hidden_dims=conf.get('readout_hidden_dims', None),
             use_equiformer_v2=conf.get('use_equiformer_v2', False),
+            equiformer_use_scalar_mlp=conf.get('equiformer_use_scalar_mlp', True),
+            equiformer_scalar_mlp_hidden=conf.get('equiformer_scalar_mlp_hidden', 128),
+            equiformer_scalar_mlp_layers=conf.get('equiformer_scalar_mlp_layers', 2),
             use_aux_force_head=conf.get('use_aux_force_head', False),
             use_aux_stress_head=conf.get('use_aux_stress_head', False),
         )
