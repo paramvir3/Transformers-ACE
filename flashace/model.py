@@ -383,6 +383,109 @@ class ScalarTransformerBlock(nn.Module):
         scalars = self.block(scalars, attn_mask=attn_mask)
         return torch.cat([scalars, rest], dim=-1)
 
+class InvariantPointAttentionBlock(nn.Module):
+    """IPA-style attention on scalar channels with point projections."""
+    def __init__(
+        self,
+        scalar_dim: int,
+        num_heads: int,
+        num_points: int,
+        ffn_hidden: int,
+        dropout: float = 0.0,
+        residual_dropout: float = 0.0,
+        ffn_gated: bool = False,
+        layer_scale_init: float | None = None,
+    ):
+        super().__init__()
+        if scalar_dim % num_heads != 0:
+            raise ValueError(
+                "num_heads must divide scalar_dim for IPA "
+                f"(scalar_dim={scalar_dim}, heads={num_heads})."
+            )
+        self.scalar_dim = scalar_dim
+        self.num_heads = num_heads
+        self.head_dim = scalar_dim // num_heads
+        self.num_points = num_points
+        self.norm1 = nn.LayerNorm(scalar_dim)
+        self.q = nn.Linear(scalar_dim, scalar_dim, bias=False)
+        self.k = nn.Linear(scalar_dim, scalar_dim, bias=False)
+        self.v = nn.Linear(scalar_dim, scalar_dim, bias=False)
+        self.q_pts = nn.Linear(scalar_dim, num_heads * num_points * 3, bias=False)
+        self.k_pts = nn.Linear(scalar_dim, num_heads * num_points * 3, bias=False)
+        self.v_pts = nn.Linear(scalar_dim, num_heads * num_points * 3, bias=False)
+        self.attn_out = nn.Linear(scalar_dim, scalar_dim)
+        self.point_out = nn.Linear(num_heads * num_points * 3, scalar_dim)
+        self.dropout = nn.Dropout(dropout)
+        self.residual_dropout = nn.Dropout(residual_dropout)
+        self.layer_scale_attn = (
+            nn.Parameter(torch.full((scalar_dim,), layer_scale_init))
+            if layer_scale_init is not None
+            else None
+        )
+        self.norm2 = nn.LayerNorm(scalar_dim)
+        self.ffn_gated = ffn_gated
+        if ffn_gated:
+            self.ffn_in = nn.Linear(scalar_dim, ffn_hidden * 2)
+            self.ffn_out = nn.Linear(ffn_hidden, scalar_dim)
+        else:
+            self.ffn = nn.Sequential(
+                nn.Linear(scalar_dim, ffn_hidden),
+                nn.SiLU(),
+                nn.Dropout(dropout),
+                nn.Linear(ffn_hidden, scalar_dim),
+            )
+        self.layer_scale_ffn = (
+            nn.Parameter(torch.full((scalar_dim,), layer_scale_init))
+            if layer_scale_init is not None
+            else None
+        )
+
+    def forward(
+        self,
+        h: torch.Tensor,
+        pos: torch.Tensor,
+        attn_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        x = self.norm1(h)
+        q = self.q(x).view(-1, self.num_heads, self.head_dim)
+        k = self.k(x).view(-1, self.num_heads, self.head_dim)
+        v = self.v(x).view(-1, self.num_heads, self.head_dim)
+        q_pts = self.q_pts(x).view(-1, self.num_heads, self.num_points, 3)
+        k_pts = self.k_pts(x).view(-1, self.num_heads, self.num_points, 3)
+        v_pts = self.v_pts(x).view(-1, self.num_heads, self.num_points, 3)
+
+        attn_logits = torch.einsum("ihd,jhd->hij", q, k) / (self.head_dim ** 0.5)
+        diff = q_pts[:, :, None, :, :] - k_pts[None, :, :, :, :]
+        dist2 = (diff ** 2).sum(dim=(-1, -2))
+        attn_logits = attn_logits - 0.5 * dist2
+        if attn_mask is not None:
+            if attn_mask.dtype == torch.bool:
+                attn_logits = attn_logits.masked_fill(attn_mask[None, ...], float("-inf"))
+            else:
+                attn_logits = attn_logits + attn_mask[None, ...]
+
+        attn = torch.softmax(attn_logits, dim=-1)
+        attn = self.dropout(attn)
+        out = torch.einsum("hij,jhd->ihd", attn, v).reshape(-1, self.scalar_dim)
+        out_pts = torch.einsum("hij,jhpd->ihpd", attn, v_pts).reshape(
+            -1, self.num_heads * self.num_points * 3
+        )
+        out = self.attn_out(out) + self.point_out(out_pts)
+        if self.layer_scale_attn is not None:
+            out = out * self.layer_scale_attn
+        h = h + self.residual_dropout(out)
+
+        x = self.norm2(h)
+        if self.ffn_gated:
+            gate, value = self.ffn_in(x).chunk(2, dim=-1)
+            ffn_out = self.ffn_out(F.silu(gate) * value)
+        else:
+            ffn_out = self.ffn(x)
+        ffn_out = self.dropout(ffn_out)
+        if self.layer_scale_ffn is not None:
+            ffn_out = ffn_out * self.layer_scale_ffn
+        return h + self.residual_dropout(ffn_out)
+
 class FlashACE(nn.Module):
     def __init__(
         self,
@@ -412,6 +515,8 @@ class FlashACE(nn.Module):
         attention_short_range: bool = False,
         attention_short_range_ratio: float = 0.5,
         attention_short_range_gate: bool = True,
+        use_ipa: bool = False,
+        ipa_num_points: int = 4,
         use_aux_force_head: bool = True,
         use_aux_stress_head: bool = True,
         message_passing_layers: int = 0,
@@ -448,6 +553,8 @@ class FlashACE(nn.Module):
         self.attention_short_range = bool(attention_short_range)
         self.attention_short_range_ratio = float(attention_short_range_ratio)
         self.attention_short_range_gate = bool(attention_short_range_gate)
+        self.use_ipa = bool(use_ipa)
+        self.ipa_num_points = int(ipa_num_points)
         self.use_aux_force_head = use_aux_force_head
         self.use_aux_stress_head = use_aux_stress_head
         self.message_passing_layers = max(0, int(message_passing_layers))
@@ -536,7 +643,7 @@ class FlashACE(nn.Module):
             )
             self.edge_bias_proj = nn.Linear(self.edge_state_dim, 1)
         ffn_hidden = self.transformer_ffn_hidden or self.attention_irreps.dim * 4
-        if self.use_transformer and not self.use_equiformer_v2:
+        if self.use_transformer and not self.use_equiformer_v2 and not self.use_ipa:
             if self.transformer_scalar_only:
                 if self.hidden_dim % self.transformer_num_heads != 0:
                     raise ValueError(
@@ -583,6 +690,31 @@ class FlashACE(nn.Module):
                 )
         else:
             self.layers = nn.ModuleList()
+        self.ipa_layers = nn.ModuleList()
+        if self.use_transformer and self.use_ipa and not self.use_equiformer_v2:
+            if not self.transformer_scalar_only:
+                raise ValueError("use_ipa requires transformer_scalar_only=True")
+            if self.hidden_dim % self.transformer_num_heads != 0:
+                raise ValueError(
+                    "transformer_num_heads must divide hidden_dim when use_ipa=True "
+                    f"(hidden_dim={self.hidden_dim}, heads={self.transformer_num_heads})."
+                )
+            scalar_ffn_hidden = self.transformer_ffn_hidden or self.hidden_dim * 4
+            self.ipa_layers = nn.ModuleList(
+                [
+                    InvariantPointAttentionBlock(
+                        self.hidden_dim,
+                        self.transformer_num_heads,
+                        self.ipa_num_points,
+                        scalar_ffn_hidden,
+                        dropout=self.transformer_dropout,
+                        residual_dropout=self.transformer_residual_dropout,
+                        ffn_gated=self.transformer_ffn_gated,
+                        layer_scale_init=self.transformer_layer_scale_init,
+                    )
+                    for _ in range(num_layers)
+                ]
+            )
         self.short_range_gate = None
         if self.use_transformer and self.attention_short_range and self.attention_short_range_gate:
             self.short_range_gate = nn.Sequential(
@@ -698,7 +830,11 @@ class FlashACE(nn.Module):
 
         attn_mask = None
         attn_mask_short = None
-        if self.use_transformer and not self.use_equiformer_v2 and self.attention_neighbor_mask:
+        if (
+            self.use_transformer
+            and not self.use_equiformer_v2
+            and self.attention_neighbor_mask
+        ):
             num_nodes = h.shape[0]
             attn_mask = torch.ones((num_nodes, num_nodes), device=h.device, dtype=torch.bool)
             idx = torch.arange(num_nodes, device=h.device)
@@ -726,64 +862,120 @@ class FlashACE(nn.Module):
                 if self.node_update_mlp and len(self.node_updates) > 0:
                     h = self.node_updates[idx](h)
         else:
-            for idx, layer in enumerate(self.layers):
-                if self.equivariant_rms_norm and len(self.eq_norms) > 0:
-                    h = self.eq_norms[idx](h)
-                if self.interleave_descriptor:
-                    scalars = h[..., : self.hidden_dim]
-                    desc = self.ace(scalars, edge_index, edge_vec, edge_len)
-                    h = h + desc if self.descriptor_residual else desc
-                if self.edge_update_per_layer and len(self.edge_updates) > 0:
-                    h = self.edge_updates[idx](h, edge_index, edge_len)
-                if self.equivariant_mix_per_layer and len(self.eq_mixes) > 0:
-                    h = self.eq_mixes[idx](h, edge_index, edge_vec, edge_len)
-                edge_bias = None
-                if self.edge_attention and self.edge_bias_proj is not None:
-                    if edge_state is None:
-                        edge_state = self.edge_state_init(h[..., : self.hidden_dim], edge_index, edge_len)
-                    else:
-                        edge_state = self.edge_state_updates[idx](
-                            h[..., : self.hidden_dim], edge_index, edge_len, edge_state
+            if self.use_ipa:
+                for idx, layer in enumerate(self.ipa_layers):
+                    if self.interleave_descriptor:
+                        scalars = h[..., : self.hidden_dim]
+                        desc = self.ace(scalars, edge_index, edge_vec, edge_len)
+                        h = h + desc if self.descriptor_residual else desc
+                    if self.edge_update_per_layer and len(self.edge_updates) > 0:
+                        h = self.edge_updates[idx](h, edge_index, edge_len)
+                    edge_bias = None
+                    if self.edge_attention and self.edge_bias_proj is not None:
+                        if edge_state is None:
+                            edge_state = self.edge_state_init(h[..., : self.hidden_dim], edge_index, edge_len)
+                        else:
+                            edge_state = self.edge_state_updates[idx](
+                                h[..., : self.hidden_dim], edge_index, edge_len, edge_state
+                            )
+                        edge_bias = self.edge_bias_proj(edge_state).squeeze(-1)
+                        if edge_bias.dtype != h.dtype:
+                            edge_bias = edge_bias.to(h.dtype)
+                    if attn_mask_short is not None:
+                        long_bias = self._build_attention_bias(
+                            h.shape[0],
+                            edge_index,
+                            edge_bias,
+                            attn_mask,
+                            h.dtype,
+                            h.device,
                         )
-                    edge_bias = self.edge_bias_proj(edge_state).squeeze(-1)
-                    if edge_bias.dtype != h.dtype:
-                        edge_bias = edge_bias.to(h.dtype)
-                if attn_mask_short is not None:
-                    long_bias = self._build_attention_bias(
-                        h.shape[0],
-                        edge_index,
-                        edge_bias,
-                        attn_mask,
-                        h.dtype,
-                        h.device,
-                    )
-                    short_bias = self._build_attention_bias(
-                        h.shape[0],
-                        edge_index,
-                        edge_bias,
-                        attn_mask_short,
-                        h.dtype,
-                        h.device,
-                    )
-                    long_out = layer(h, attn_mask=long_bias)
-                    short_out = layer(h, attn_mask=short_bias)
-                    if self.short_range_gate is None:
-                        h = 0.5 * (short_out + long_out)
+                        short_bias = self._build_attention_bias(
+                            h.shape[0],
+                            edge_index,
+                            edge_bias,
+                            attn_mask_short,
+                            h.dtype,
+                            h.device,
+                        )
+                        long_out = layer(h, pos, attn_mask=long_bias)
+                        short_out = layer(h, pos, attn_mask=short_bias)
+                        if self.short_range_gate is None:
+                            h = 0.5 * (short_out + long_out)
+                        else:
+                            gate = self.short_range_gate(h[..., : self.hidden_dim])
+                            h = gate * short_out + (1.0 - gate) * long_out
                     else:
-                        gate = self.short_range_gate(h[..., : self.hidden_dim])
-                        h = gate * short_out + (1.0 - gate) * long_out
-                else:
-                    attn_bias = self._build_attention_bias(
-                        h.shape[0],
-                        edge_index,
-                        edge_bias,
-                        attn_mask,
-                        h.dtype,
-                        h.device,
-                    )
-                    h = layer(h, attn_mask=attn_bias)
-                if self.node_update_mlp and len(self.node_updates) > 0:
-                    h = self.node_updates[idx](h)
+                        attn_bias = self._build_attention_bias(
+                            h.shape[0],
+                            edge_index,
+                            edge_bias,
+                            attn_mask,
+                            h.dtype,
+                            h.device,
+                        )
+                        h = layer(h, pos, attn_mask=attn_bias)
+                    if self.node_update_mlp and len(self.node_updates) > 0:
+                        h = self.node_updates[idx](h)
+            else:
+                for idx, layer in enumerate(self.layers):
+                    if self.equivariant_rms_norm and len(self.eq_norms) > 0:
+                        h = self.eq_norms[idx](h)
+                    if self.interleave_descriptor:
+                        scalars = h[..., : self.hidden_dim]
+                        desc = self.ace(scalars, edge_index, edge_vec, edge_len)
+                        h = h + desc if self.descriptor_residual else desc
+                    if self.edge_update_per_layer and len(self.edge_updates) > 0:
+                        h = self.edge_updates[idx](h, edge_index, edge_len)
+                    if self.equivariant_mix_per_layer and len(self.eq_mixes) > 0:
+                        h = self.eq_mixes[idx](h, edge_index, edge_vec, edge_len)
+                    edge_bias = None
+                    if self.edge_attention and self.edge_bias_proj is not None:
+                        if edge_state is None:
+                            edge_state = self.edge_state_init(h[..., : self.hidden_dim], edge_index, edge_len)
+                        else:
+                            edge_state = self.edge_state_updates[idx](
+                                h[..., : self.hidden_dim], edge_index, edge_len, edge_state
+                            )
+                        edge_bias = self.edge_bias_proj(edge_state).squeeze(-1)
+                        if edge_bias.dtype != h.dtype:
+                            edge_bias = edge_bias.to(h.dtype)
+                    if attn_mask_short is not None:
+                        long_bias = self._build_attention_bias(
+                            h.shape[0],
+                            edge_index,
+                            edge_bias,
+                            attn_mask,
+                            h.dtype,
+                            h.device,
+                        )
+                        short_bias = self._build_attention_bias(
+                            h.shape[0],
+                            edge_index,
+                            edge_bias,
+                            attn_mask_short,
+                            h.dtype,
+                            h.device,
+                        )
+                        long_out = layer(h, attn_mask=long_bias)
+                        short_out = layer(h, attn_mask=short_bias)
+                        if self.short_range_gate is None:
+                            h = 0.5 * (short_out + long_out)
+                        else:
+                            gate = self.short_range_gate(h[..., : self.hidden_dim])
+                            h = gate * short_out + (1.0 - gate) * long_out
+                    else:
+                        attn_bias = self._build_attention_bias(
+                            h.shape[0],
+                            edge_index,
+                            edge_bias,
+                            attn_mask,
+                            h.dtype,
+                            h.device,
+                        )
+                        h = layer(h, attn_mask=attn_bias)
+                    if self.node_update_mlp and len(self.node_updates) > 0:
+                        h = self.node_updates[idx](h)
             
         # 2. Readout
         # Note: We extract only the scalar (L=0) features for energy

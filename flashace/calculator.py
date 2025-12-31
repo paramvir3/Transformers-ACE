@@ -70,6 +70,8 @@ class FlashACECalculator(Calculator):
             attention_short_range=conf.get('attention_short_range', False),
             attention_short_range_ratio=conf.get('attention_short_range_ratio', 0.5),
             attention_short_range_gate=conf.get('attention_short_range_gate', True),
+            use_ipa=conf.get('use_ipa', False),
+            ipa_num_points=conf.get('ipa_num_points', 4),
             descriptor_passes=conf.get('descriptor_passes', 1),
             descriptor_residual=conf.get('descriptor_residual', True),
             radial_mlp_hidden=conf.get('radial_mlp_hidden', 64),

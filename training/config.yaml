@@ -47,6 +47,8 @@ attention_neighbor_mask: false   # Restrict attention to neighbor edges and self
 attention_short_range: false     # Run a second short-range attention pass and fuse
 attention_short_range_ratio: 0.5 # Short-range cutoff ratio of r_max (0-1]
 attention_short_range_gate: true # Gate short vs long attention outputs per node
+use_ipa: false                   # Use invariant point attention (AlphaFold-style) on scalar channels
+ipa_num_points: 4                # Number of points per head for IPA
 radial_basis_type: "bessel"       # Options: bessel, gaussian
 radial_trainable: false           # Make radial frequencies/centers learnable
 envelope_exponent: 5              # Polynomial cutoff exponent (higher = steeper)

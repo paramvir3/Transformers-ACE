@@ -435,6 +435,8 @@ def main():
         attention_short_range=config.get('attention_short_range', False),
         attention_short_range_ratio=config.get('attention_short_range_ratio', 0.5),
         attention_short_range_gate=config.get('attention_short_range_gate', True),
+        use_ipa=config.get('use_ipa', False),
+        ipa_num_points=config.get('ipa_num_points', 4),
         descriptor_passes=config.get('descriptor_passes', 1),
         descriptor_residual=config.get('descriptor_residual', True),
         radial_mlp_hidden=config.get('radial_mlp_hidden', 64),
