@@ -131,6 +131,8 @@ class ACE_Descriptor(nn.Module):
         radial_trainable: bool = False,
         envelope_exponent: int = 5,
         gaussian_width: float = 0.5,
+        radial_mlp_hidden: int = 64,
+        radial_mlp_layers: int = 2,
     ):
         super().__init__()
         self.r_max = r_max
@@ -186,9 +188,10 @@ class ACE_Descriptor(nn.Module):
             internal_weights=False,
             shared_weights=False,
         )
-        self.radial_net = FullyConnectedNet(
-            [num_radial, 64, self.tp_a.weight_numel], torch.nn.functional.silu
-        )
+        radial_mlp_hidden = max(1, int(radial_mlp_hidden))
+        radial_mlp_layers = max(1, int(radial_mlp_layers))
+        mlp_sizes = [num_radial] + [radial_mlp_hidden] * (radial_mlp_layers - 1) + [self.tp_a.weight_numel]
+        self.radial_net = FullyConnectedNet(mlp_sizes, torch.nn.functional.silu)
 
         # 3. B-Basis (Symmetric Contraction)
         # In MACE the B-basis is a pure Clebsch–Gordan contraction of A-basis
