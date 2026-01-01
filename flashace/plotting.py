@@ -86,3 +86,71 @@ def plot_training_results(history, train_preds, val_preds, save_dir="plots"):
     plt.close()
     
     print(f"\n[PLOTTING] Plots saved to directory: '{save_dir}/'")
+
+
+def plot_training_metrics(history, save_dir="plots"):
+    """
+    Plot training curves for loss, energy, forces, and stresses versus epoch.
+    """
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+
+    epochs = np.arange(1, len(history.get("train_loss", [])) + 1)
+
+    def _plot_series(y_train, y_val, ylabel, title, filename, logy=False):
+        y_train = np.asarray(y_train, dtype=float)
+        y_val = np.asarray(y_val, dtype=float)
+        mask = np.isfinite(y_train) & np.isfinite(y_val)
+        if not np.any(mask):
+            return
+        plt.figure(figsize=(8, 6))
+        plt.plot(epochs[mask], y_train[mask], label="Train", linewidth=2)
+        plt.plot(epochs[mask], y_val[mask], label="Validation", linewidth=2, linestyle="--")
+        plt.xlabel("Epochs", fontsize=12)
+        plt.ylabel(ylabel, fontsize=12)
+        plt.title(title, fontsize=14)
+        if logy:
+            plt.yscale("log")
+        plt.legend()
+        plt.grid(True, which="both", ls="-", alpha=0.5)
+        plt.savefig(os.path.join(save_dir, filename), dpi=300)
+        plt.close()
+
+    if history.get("train_loss") and history.get("val_loss"):
+        _plot_series(
+            history["train_loss"],
+            history["val_loss"],
+            "Loss (Weighted)",
+            "Training Convergence",
+            "learning_curve.png",
+            logy=True,
+        )
+
+    if history.get("train_energy_mev") and history.get("val_energy_mev"):
+        _plot_series(
+            history["train_energy_mev"],
+            history["val_energy_mev"],
+            "Energy RMSE (meV/atom)",
+            "Energy vs Epoch",
+            "energy_curve.png",
+        )
+
+    if history.get("train_force_rmse") and history.get("val_force_rmse"):
+        _plot_series(
+            history["train_force_rmse"],
+            history["val_force_rmse"],
+            "Force RMSE (eV/Å)",
+            "Forces vs Epoch",
+            "force_curve.png",
+        )
+
+    if history.get("train_stress_rmse") and history.get("val_stress_rmse"):
+        _plot_series(
+            history["train_stress_rmse"],
+            history["val_stress_rmse"],
+            "Stress RMSE",
+            "Stresses vs Epoch",
+            "stress_curve.png",
+        )
+
+    print(f"\n[PLOTTING] Metric plots saved to directory: '{save_dir}/'")
