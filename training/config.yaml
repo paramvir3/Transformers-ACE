@@ -29,6 +29,7 @@ pt_ffn_gated: false             # Use gated FFN in Point Transformer (SwiGLU-sty
 pt_layer_scale_init: null       # Optional layer-scale init for Point Transformer
 pt_rpe_bins: 0                  # Relative position embedding bins (0 disables)
 pt_rpe_scale: 1.0               # Scale for RPE coordinate binning
+pt_use_torch_scatter: false     # Use torch_scatter softmax when available (faster on GPU)
 radial_basis_type: "bessel"     # Options: bessel, gaussian
 radial_trainable: false         # Make radial frequencies/centers learnable
 envelope_exponent: 5            # Polynomial cutoff exponent (higher = steeper)

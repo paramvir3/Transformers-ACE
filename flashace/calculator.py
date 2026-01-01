@@ -65,6 +65,7 @@ class FlashACECalculator(Calculator):
             pt_layer_scale_init=conf.get('pt_layer_scale_init', None),
             pt_rpe_bins=conf.get('pt_rpe_bins', 0),
             pt_rpe_scale=conf.get('pt_rpe_scale', 1.0),
+            pt_use_torch_scatter=conf.get('pt_use_torch_scatter', False),
             descriptor_passes=conf.get('descriptor_passes', 1),
             descriptor_residual=conf.get('descriptor_residual', True),
             radial_mlp_hidden=conf.get('radial_mlp_hidden', 64),

@@ -4,6 +4,11 @@ import torch.nn.functional as F
 from e3nn import o3
 from .physics import ACE_Descriptor
 
+try:
+    import torch_scatter
+except Exception:
+    torch_scatter = None
+
 class ScalarMessagePassing(nn.Module):
     """Lightweight, scalar-only message passing to mimic NequIP-style updates."""
     def __init__(self, hidden_dim: int):
@@ -383,9 +388,16 @@ class ScalarTransformerBlock(nn.Module):
         scalars = self.block(scalars, attn_mask=attn_mask)
         return torch.cat([scalars, rest], dim=-1)
 
-def _segment_softmax(logits: torch.Tensor, index: torch.Tensor, num_nodes: int) -> torch.Tensor:
+def _segment_softmax(
+    logits: torch.Tensor,
+    index: torch.Tensor,
+    num_nodes: int,
+    use_torch_scatter: bool,
+) -> torch.Tensor:
     if logits.numel() == 0:
         return logits
+    if use_torch_scatter and torch_scatter is not None:
+        return torch_scatter.scatter_softmax(logits, index, dim=0)
     expanded_index = index[:, None].expand(-1, logits.shape[-1])
     max_per = torch.full(
         (num_nodes, logits.shape[-1]),
@@ -413,6 +425,7 @@ class PointTransformerBlock(nn.Module):
         layer_scale_init: float | None = None,
         rpe_bins: int = 0,
         rpe_scale: float = 1.0,
+        use_torch_scatter: bool = False,
     ):
         super().__init__()
         self.scalar_dim = scalar_dim
@@ -445,6 +458,7 @@ class PointTransformerBlock(nn.Module):
             self.rpe_x = nn.Embedding(table_size, scalar_dim)
             self.rpe_y = nn.Embedding(table_size, scalar_dim)
             self.rpe_z = nn.Embedding(table_size, scalar_dim)
+        self.use_torch_scatter = bool(use_torch_scatter)
         self.attn_out = nn.Linear(scalar_dim, scalar_dim)
         self.dropout = nn.Dropout(dropout)
         self.residual_dropout = nn.Dropout(residual_dropout)
@@ -495,7 +509,7 @@ class PointTransformerBlock(nn.Module):
         v = self.alpha(x)[sender]
         relation = q - k + rel
         attn = self.gamma(relation)
-        attn = _segment_softmax(attn, receiver, x.shape[0])
+        attn = _segment_softmax(attn, receiver, x.shape[0], self.use_torch_scatter)
         value = v + self.delta_val(rel_pos)
         out = torch.zeros_like(x)
         out.index_add_(0, receiver, attn * value)
@@ -539,6 +553,7 @@ class FlashACE(nn.Module):
         pt_layer_scale_init: float | None = None,
         pt_rpe_bins: int = 0,
         pt_rpe_scale: float = 1.0,
+        pt_use_torch_scatter: bool = False,
         readout_hidden_dims: list[int] | None = None,
     ):
         super().__init__()
@@ -575,6 +590,7 @@ class FlashACE(nn.Module):
                     layer_scale_init=pt_layer_scale_init,
                     rpe_bins=pt_rpe_bins,
                     rpe_scale=pt_rpe_scale,
+                    use_torch_scatter=pt_use_torch_scatter,
                 )
                 for _ in range(num_layers)
             ]

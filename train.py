@@ -430,6 +430,7 @@ def main():
         pt_layer_scale_init=config.get('pt_layer_scale_init', None),
         pt_rpe_bins=config.get('pt_rpe_bins', 0),
         pt_rpe_scale=config.get('pt_rpe_scale', 1.0),
+        pt_use_torch_scatter=config.get('pt_use_torch_scatter', False),
         descriptor_passes=config.get('descriptor_passes', 1),
         descriptor_residual=config.get('descriptor_residual', True),
         radial_mlp_hidden=config.get('radial_mlp_hidden', 64),
