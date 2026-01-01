@@ -395,7 +395,7 @@ def _segment_softmax(logits: torch.Tensor, index: torch.Tensor, num_nodes: int) 
     )
     max_per = max_per.scatter_reduce(0, expanded_index, logits, reduce="amax", include_self=True)
     exp = torch.exp(logits - max_per[index])
-    sum_per = torch.zeros_like(max_per)
+    sum_per = torch.zeros_like(max_per, dtype=exp.dtype)
     sum_per = sum_per.scatter_reduce(0, expanded_index, exp, reduce="sum", include_self=True)
     return exp / (sum_per[index] + 1e-9)
 
