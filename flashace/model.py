@@ -574,7 +574,6 @@ class FactorizedPointTransformerBlock(nn.Module):
         self.edge_irreps = o3.Irreps([(scalar_dim, ir) for _, ir in self.sh_irreps])
         self.sh = o3.SphericalHarmonics(self.sh_irreps, normalize=True, normalization="component")
 
-        self.tp_q = o3.FullyConnectedTensorProduct(self.irreps_node, self.sh_irreps, self.edge_irreps)
         self.tp_k = o3.FullyConnectedTensorProduct(self.irreps_node, self.sh_irreps, self.edge_irreps)
         self.tp_v = o3.FullyConnectedTensorProduct(self.irreps_node, self.sh_irreps, self.edge_irreps)
 
@@ -600,6 +599,12 @@ class FactorizedPointTransformerBlock(nn.Module):
             out_dim=self.edge_irreps.dim,
             depth=radial_mlp_layers,
         )
+        self.radial_bias = _make_mlp(
+            in_dim=num_radial,
+            hidden_dim=radial_mlp_hidden,
+            out_dim=1,
+            depth=radial_mlp_layers,
+        )
 
         self.score_mlp = nn.Sequential(
             nn.Linear(1, score_hidden),
@@ -607,6 +612,7 @@ class FactorizedPointTransformerBlock(nn.Module):
             nn.Linear(score_hidden, 1),
         )
         self.use_torch_scatter = bool(use_torch_scatter)
+        self.key_proj = o3.Linear(self.edge_irreps, self.irreps_node)
         self.out_proj = o3.Linear(self.edge_irreps, self.irreps_node)
         self.dropout = nn.Dropout(dropout)
         self.residual_dropout = nn.Dropout(residual_dropout)
@@ -648,7 +654,7 @@ class FactorizedPointTransformerBlock(nn.Module):
         k_nodes = self.k_proj(x)
         v_nodes = self.v_proj(x)
 
-        q_edge = self.tp_q(q_nodes[receiver], sh)
+        q = q_nodes[receiver]
         k_edge = self.tp_k(k_nodes[sender], sh)
         v_edge = self.tp_v(v_nodes[sender], sh)
 
@@ -658,9 +664,10 @@ class FactorizedPointTransformerBlock(nn.Module):
         k_edge = k_edge * k_gate
         v_edge = v_edge * v_gate
 
-        delta = q_edge - k_edge
-        delta_norm = _irrep_squared_norm(self.edge_irreps, delta)
-        attn_logits = self.score_mlp(delta_norm)
+        k_proj = self.key_proj(k_edge)
+        delta = q - k_proj
+        delta_norm = _irrep_squared_norm(self.irreps_node, delta)
+        attn_logits = self.score_mlp(delta_norm) + self.radial_bias(radial_emb)
         attn = _segment_softmax(attn_logits, receiver, x.shape[0], self.use_torch_scatter)
 
         out = torch.zeros((x.shape[0], self.edge_irreps.dim), device=x.device, dtype=x.dtype)
