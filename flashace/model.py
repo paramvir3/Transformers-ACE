@@ -859,7 +859,7 @@ class FlashACE(nn.Module):
                 h = h + desc
 
         edge_index = self._ensure_self_edges(edge_index, h.shape[0], h.device)
-        scalars = h
+        scalars = h[:, : self.hidden_dim]
         for layer in self.pt_layers:
             scalars = layer(scalars, pos, edge_index=edge_index)
         h = scalars
