@@ -6,20 +6,36 @@
 train_file: "data_2.extxyz"    # Your full dataset
 valid_file: null                  # Leave null to use random split
 val_split: 0.1                    # 10% of data used for validation (randomly selected)
+split_seed: 42                    # RNG seed for train/val splitting
+stratified_val_bins: 0           # >0 enables energy-stratified split with N bins
 model_save_path: "model.pt"
 
 # ------------------------------------------------------------------------------
 # 2. MODEL ARCHITECTURE
 # ------------------------------------------------------------------------------
 r_max: 5
-l_max: 1
+l_max: 0                         # IPA-only uses invariant scalars
 num_radial: 12
 hidden_dim: 128
 num_layers: 2
-radial_basis_type: "bessel"       # Options: bessel, gaussian
-radial_trainable: false           # Make radial frequencies/centers learnable
-envelope_exponent: 5              # Polynomial cutoff exponent (higher = steeper)
-gaussian_width: 0.5              # Relative Gaussian width multiplier (only used if basis=gaussian)
+descriptor_passes: 1            # Number of ACE descriptor iterations before IPA
+descriptor_residual: true       # Add descriptor outputs residually across passes
+readout_hidden_dims: [64, 32]   # MLP taper for readout (e.g., hidden_dim -> 64 -> 32 -> 1)
+pt_pos_hidden: 64               # Hidden width for position MLP in Point Transformer
+pt_ffn_hidden: null             # Hidden width for Point Transformer FFN (defaults to 4x hidden_dim)
+pt_dropout: 0.0                 # Dropout in Point Transformer attention/FFN
+pt_residual_dropout: 0.0        # Residual dropout for Point Transformer outputs
+pt_ffn_gated: false             # Use gated FFN in Point Transformer (SwiGLU-style)
+pt_layer_scale_init: null       # Optional layer-scale init for Point Transformer
+pt_rpe_bins: 0                  # Relative position embedding bins (0 disables)
+pt_rpe_scale: 1.0               # Scale for RPE coordinate binning
+pt_use_torch_scatter: false     # Use torch_scatter softmax when available (faster on GPU)
+radial_basis_type: "bessel"     # Options: bessel, gaussian
+radial_trainable: false         # Make radial frequencies/centers learnable
+envelope_exponent: 5            # Polynomial cutoff exponent (higher = steeper)
+gaussian_width: 0.5             # Relative Gaussian width multiplier (only used if basis=gaussian)
+radial_mlp_hidden: 64           # Hidden width for the radial mixing MLP
+radial_mlp_layers: 2            # Layers for the radial mixing MLP
 
 # ------------------------------------------------------------------------------
 # 3. TRAINING PARAMETERS
@@ -30,19 +46,32 @@ batch_size: 8
 learning_rate: 0.002             # Slightly higher to emphasize force updates
 # Optional optimizer and scheduler tweaks
 weight_decay: 0.0
-lr_scheduler_factor: 0.5
-lr_scheduler_patience: 6         # Faster LR reductions if plateaus
+lr_scheduler_t_max: 300          # Epochs for one cosine cycle (defaults to total epochs)
+lr_warmup_epochs: 0              # Linear warmup steps before cosine annealing
+lr_warmup_start_factor: 0.1      # Starting LR factor for warmup (fraction of base LR, must be > 0)
+lr_scheduler_interval: "epoch"   # Apply LR schedule per 'epoch' or per 'step' for faster ramping
+lr_scheduler_use_restarts: false # Use cosine annealing with warm restarts instead of a single cycle
+lr_restart_mult: 1.0             # Restart period multiplier for CosineAnnealingWarmRestarts
 lr_min: 0.00005
 clip_grad_norm: 1.0
 use_amp: true                    # Enable mixed precision on CUDA for speed
 amp_dtype: "bfloat16"            # Prefer bf16 for stability; use float16 if unavailable
+sdp_backend: "math"              # CUDA SDP backend: auto, flash, mem_efficient, math
 grad_accum_steps: 1              # Gradient accumulation steps before optimizer step
 precompute_neighbors: true       # Cache neighbor lists to cut CPU overhead
+precompute_neighbors_log_interval: 0 # Log every N precomputed neighbor lists (0 disables)
+max_neighbors: 0                 # Cap neighbors per atom for speed (0 disables)
 random_rotation: false           # Apply random SO(3) rotations per batch item
 device: "cuda"
+dataloader_num_workers: 0        # DataLoader worker processes (0 avoids shared memory issues)
+dataloader_pin_memory: false     # Pin CPU memory for faster host->device copies
 checkpoint_dir: "checkpoints"     # Directory to stash periodic checkpoints
-checkpoint_interval: 0           # Save a checkpoint every N epochs (0 disables)
+checkpoint_interval: 10          # Save a checkpoint every N epochs (0 disables)
+checkpoint_latest: false         # Always save a rolling latest.pt checkpoint
+resume_latest: false             # Resume from checkpoint_dir/latest.pt if resume_from is unset
 resume_from: null                # Path to a checkpoint to resume from
+plot_dir: "plots"                # Directory for training metric plots
+metrics_interval: 1              # Compute/print metrics every N epochs
 resume_load_optimizer: false     # Load optimizer state when resuming
 resume_load_scheduler: false     # Load LR scheduler state when resuming
 resume_load_scaler: false        # Load AMP GradScaler state when resuming
@@ -56,7 +85,10 @@ solve_atomic_energies: false      # Fit species reference energies from the trai
 # ------------------------------------------------------------------------------
 energy_weight: 1.0
 forces_weight: 10.0              # Emphasize forces early
+forces_weight_final: 10.0        # Optional target force weight to anneal toward
+forces_weight_decay_epochs: 0    # Epochs to linearly decay force weight (0 = no decay)
 stress_weight: 0.0               # Disable unless stresses are critical
+force_only_epochs: 0            # Train with force loss only for N initial epochs
 
 # Auxiliary and regularization weights
 aux_force_weight: 0.1            # Small multi-task force head weight
@@ -70,9 +102,6 @@ displacement_prob: 0.1
 displacement_sigma: 0.02
 
 # Attention controls
-attention_message_clip: 8.0
-attention_conditioned_decay: true
-attention_share_qkv: "kv"        # Share KV across heads for stability
 temperature_scale_start: 1.3
 temperature_scale_end: 1.0
 temperature_scale_epochs: 15
