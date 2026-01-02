@@ -493,7 +493,7 @@ class PointTransformerBlock(nn.Module):
     ) -> torch.Tensor:
         x = self.norm1(h)
         sender, receiver = edge_index
-        rel_pos = pos[receiver] - pos[sender]
+        rel_pos = pos[sender] - pos[receiver]
         rel = self.delta(rel_pos)
         if self.rpe_bins > 0:
             scaled = torch.round(rel_pos / self.rpe_scale).clamp(-self.rpe_bins, self.rpe_bins).to(torch.long)
