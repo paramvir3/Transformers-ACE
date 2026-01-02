@@ -145,7 +145,6 @@ class DenseFlashAttention(nn.Module):
                     nn.init.zeros_(m.bias)
         if self.layer_scale is not None and self.layer_scale_init_value is not None:
             nn.init.constant_(self.layer_scale, self.layer_scale_init_value)
-
     def forward(self, x, edge_index, edge_vec, edge_len, temperature_scale: float = 1.0):
         sender, receiver = edge_index
         num_nodes = x.shape[0]
@@ -213,6 +212,7 @@ class DenseFlashAttention(nn.Module):
         energy_delta = energy_proj[:, sender] - energy_proj[:, receiver]
         radial_delta = radial_proj[:, sender] - radial_proj[:, receiver]
         tangential_delta = tangential_proj[:, sender] - tangential_proj[:, receiver]
+
 
         # Radial energy penalizes long bonds, tangential is distance agnostic.
         radial_distance_scale = F.softplus(self._radial_distance_log_scale).to(edge_len.dtype)[:, None]
