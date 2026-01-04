@@ -18,9 +18,6 @@ python train.py --config training/config.yaml
 
 ## The main problem 
 
-a. Energies converge, not forces
-
-b. Transfomer block improves force learning
-
-c. Number of trainable parameters should stay closer to dataset to avoid overfitting
+a. Transfomer block improves force learning
+b. Number of trainable parameters should stay closer to dataset to avoid overfitting
 
