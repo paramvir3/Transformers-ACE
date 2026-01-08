@@ -718,8 +718,20 @@ class TACEBackbone(nn.Module):
         bias: bool = False,
     ):
         super().__init__()
-        from tace.models.v1.representation import TACEDescriptor
-        from tace.models.v1.utils import Graph as TACEGraph
+        try:
+            from tace.models.v1.representation import TACEDescriptor
+            from tace.models.v1.utils import Graph as TACEGraph
+            from tace.models.v1.default import (
+                RADIAL_BASIS,
+                ANGULAR_BASIS,
+                RADIAL_MLP,
+                INTER,
+                PROD,
+            )
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError(
+                "TACE is not installed. Install the tace package to use descriptor_backend='tace'."
+            ) from exc
 
         self.tace_graph_cls = TACEGraph
         self.atomic_numbers = [int(z) for z in atomic_numbers]
@@ -729,11 +741,11 @@ class TACEBackbone(nn.Module):
         lmax_list = _expand_list(lmax, self.num_layers, "tace_lmax")
         num_channel_list = _expand_list(num_channel, self.num_layers, "tace_num_channel")
         num_channel_hidden_list = _expand_list(num_channel_hidden, self.num_layers, "tace_num_channel_hidden")
-        radial_basis = radial_basis or {}
-        angular_basis = angular_basis or {}
-        radial_mlp = radial_mlp or {}
-        inter = inter or {}
-        prod = prod or {}
+        radial_basis = RADIAL_BASIS if radial_basis is None else radial_basis
+        angular_basis = ANGULAR_BASIS if angular_basis is None else angular_basis
+        radial_mlp = RADIAL_MLP if radial_mlp is None else radial_mlp
+        inter = INTER if inter is None else inter
+        prod = PROD if prod is None else prod
         universal_embedding = universal_embedding or {
             "invariant_embedding_property": [],
             "equivariant_embedding_property": [],

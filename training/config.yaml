@@ -48,12 +48,12 @@ tace_lmax: 1                    # TACE angular max per layer (int or list)
 tace_avg_num_neighbors: 64      # TACE neighbor normalization
 tace_num_channel: 64            # TACE channels (int or list per layer)
 tace_num_channel_hidden: 64     # TACE hidden channels (int or list per layer)
-tace_radial_basis: {}           # TACE radial basis config (see TACE)
-tace_angular_basis: {}          # TACE angular basis config (see TACE)
-tace_radial_mlp: {}             # TACE radial MLP config
-tace_inter: {}                  # TACE interaction config
-tace_prod: {}                   # TACE product config
-tace_universal_embedding: {}    # TACE universal embedding config
+tace_radial_basis: null         # TACE radial basis config (null uses TACE defaults)
+tace_angular_basis: null        # TACE angular basis config (null uses TACE defaults)
+tace_radial_mlp: null           # TACE radial MLP config (null uses TACE defaults)
+tace_inter: null                # TACE interaction config (null uses TACE defaults)
+tace_prod: null                 # TACE product config (null uses TACE defaults)
+tace_universal_embedding: null  # TACE universal embedding config
 
 # ------------------------------------------------------------------------------
 # 3. TRAINING PARAMETERS
