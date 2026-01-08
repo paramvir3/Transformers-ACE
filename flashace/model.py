@@ -419,6 +419,15 @@ class PointTransformerBlock(nn.Module):
         scalar_dim: int,
         ffn_hidden: int,
         pos_hidden: int,
+        r_max: float,
+        num_radial: int,
+        l_max: int,
+        radial_basis_type: str,
+        radial_trainable: bool,
+        envelope_exponent: int,
+        gaussian_width: float,
+        radial_mlp_hidden: int,
+        radial_mlp_layers: int,
         dropout: float = 0.0,
         residual_dropout: float = 0.0,
         ffn_gated: bool = False,
@@ -433,6 +442,27 @@ class PointTransformerBlock(nn.Module):
         self.phi = nn.Linear(scalar_dim, scalar_dim, bias=False)
         self.psi = nn.Linear(scalar_dim, scalar_dim, bias=False)
         self.alpha = nn.Linear(scalar_dim, scalar_dim, bias=False)
+        self.radial_basis = ACERadialBasis(
+            r_max=r_max,
+            num_radial=num_radial,
+            envelope_exponent=envelope_exponent,
+            basis_type=radial_basis_type,
+            trainable=radial_trainable,
+            gaussian_width=gaussian_width,
+        )
+        radial_mlp_hidden = max(1, int(radial_mlp_hidden))
+        radial_mlp_layers = max(1, int(radial_mlp_layers))
+        self.radial_gate = _make_mlp(
+            in_dim=num_radial,
+            hidden_dim=radial_mlp_hidden,
+            out_dim=scalar_dim,
+            depth=radial_mlp_layers,
+        )
+        self.sh_irreps = o3.Irreps.spherical_harmonics(l_max)
+        self.sh = o3.SphericalHarmonics(self.sh_irreps, normalize=True, normalization="component")
+        sh_dim = self.sh_irreps.dim
+        self.sh_key = nn.Linear(sh_dim, scalar_dim, bias=False)
+        self.sh_val = nn.Linear(sh_dim, scalar_dim, bias=False)
         self.delta = nn.Sequential(
             nn.Linear(3, pos_hidden),
             nn.ReLU(),
@@ -444,7 +474,7 @@ class PointTransformerBlock(nn.Module):
             nn.Linear(pos_hidden, scalar_dim),
         )
         self.gamma = nn.Sequential(
-            nn.Linear(scalar_dim, scalar_dim),
+            nn.Linear(scalar_dim * 3 + num_radial, scalar_dim),
             nn.ReLU(),
             nn.Linear(scalar_dim, scalar_dim),
         )
@@ -494,6 +524,10 @@ class PointTransformerBlock(nn.Module):
         x = self.norm1(h)
         sender, receiver = edge_index
         rel_pos = pos[receiver] - pos[sender]
+        edge_len = torch.norm(rel_pos, dim=1)
+        edge_dir = rel_pos / (edge_len.unsqueeze(-1) + 1e-9)
+        sh = self.sh(edge_dir)
+        radial_emb = self.radial_basis(edge_len)
         rel = self.delta(rel_pos)
         if self.rpe_bins > 0:
             scaled = torch.round(rel_pos / self.rpe_scale).clamp(-self.rpe_bins, self.rpe_bins).to(torch.long)
@@ -507,10 +541,13 @@ class PointTransformerBlock(nn.Module):
         q = self.phi(x)[receiver]
         k = self.psi(x)[sender]
         v = self.alpha(x)[sender]
-        relation = q - k + rel
+        sh_k = self.sh_key(sh)
+        sh_v = self.sh_val(sh)
+        relation = torch.cat([q - k, rel, sh_k, radial_emb], dim=-1)
         attn = self.gamma(relation)
         attn = _segment_softmax(attn, receiver, x.shape[0], self.use_torch_scatter)
-        value = v + self.delta_val(rel_pos)
+        gate = torch.sigmoid(self.radial_gate(radial_emb))
+        value = (v + self.delta_val(rel_pos) + sh_v) * gate
         out = torch.zeros_like(x)
         out.index_add_(0, receiver, attn * value)
         out = self.attn_out(out)
@@ -897,6 +934,15 @@ class FlashACE(nn.Module):
                         hidden_dim,
                         scalar_ffn_hidden,
                         pos_hidden=pt_pos_hidden,
+                        r_max=r_max,
+                        num_radial=num_radial,
+                        l_max=l_max,
+                        radial_basis_type=radial_basis_type,
+                        radial_trainable=radial_trainable,
+                        envelope_exponent=envelope_exponent,
+                        gaussian_width=gaussian_width,
+                        radial_mlp_hidden=radial_mlp_hidden,
+                        radial_mlp_layers=radial_mlp_layers,
                         dropout=pt_dropout,
                         residual_dropout=pt_residual_dropout,
                         ffn_gated=pt_ffn_gated,
