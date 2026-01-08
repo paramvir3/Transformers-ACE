@@ -24,7 +24,7 @@ class FlashACECalculator(Calculator):
 
         # 2. Load Model & Config
         try:
-            checkpoint = torch.load(model_path, map_location=self.device)
+            checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
         except FileNotFoundError:
             raise FileNotFoundError(f"Model file not found: {model_path}")
 
@@ -57,15 +57,49 @@ class FlashACECalculator(Calculator):
             radial_trainable=conf.get('radial_trainable', False),
             envelope_exponent=conf.get('envelope_exponent', 5),
             gaussian_width=conf.get('gaussian_width', 0.5),
-            attention_message_clip=conf.get('attention_message_clip', None),
-            attention_conditioned_decay=conf.get('attention_conditioned_decay', True),
-            attention_share_qkv=conf.get('attention_share_qkv', "none"),
-            use_aux_force_head=conf.get('use_aux_force_head', False),
-            use_aux_stress_head=conf.get('use_aux_stress_head', False),
+            pt_pos_hidden=conf.get('pt_pos_hidden', 64),
+            pt_ffn_hidden=conf.get('pt_ffn_hidden', None),
+            pt_dropout=conf.get('pt_dropout', 0.0),
+            pt_residual_dropout=conf.get('pt_residual_dropout', 0.0),
+            pt_ffn_gated=conf.get('pt_ffn_gated', False),
+            pt_layer_scale_init=conf.get('pt_layer_scale_init', None),
+            pt_rpe_bins=conf.get('pt_rpe_bins', 0),
+            pt_rpe_scale=conf.get('pt_rpe_scale', 1.0),
+            pt_use_torch_scatter=conf.get('pt_use_torch_scatter', False),
+            pt_factorized=conf.get('pt_factorized', False),
+            pt_l_max=conf.get('pt_l_max', None),
+            pt_radial_mlp_hidden=conf.get('pt_radial_mlp_hidden', 64),
+            pt_radial_mlp_layers=conf.get('pt_radial_mlp_layers', 2),
+            descriptor_backend=conf.get('descriptor_backend', 'pt'),
+            pt_equivariant=conf.get('pt_equivariant', False),
+            pt_vector_dim=conf.get('pt_vector_dim', 32),
+            pt_hierarchical=conf.get('pt_hierarchical', False),
+            pt_voxel_size=conf.get('pt_voxel_size', 2.0),
+            pt_long_range=conf.get('pt_long_range', False),
+            descriptor_passes=conf.get('descriptor_passes', 1),
+            descriptor_residual=conf.get('descriptor_residual', True),
+            radial_mlp_hidden=conf.get('radial_mlp_hidden', 64),
+            radial_mlp_layers=conf.get('radial_mlp_layers', 2),
+            readout_hidden_dims=conf.get('readout_hidden_dims', None),
         )
         
         # 4. Load Weights
-        self.model.load_state_dict(checkpoint['model_state_dict'], strict=False)
+        state_dict = checkpoint['model_state_dict']
+        model_state = self.model.state_dict()
+        filtered_state = {}
+        mismatched = []
+        for key, value in state_dict.items():
+            if key not in model_state:
+                continue
+            if model_state[key].shape != value.shape:
+                mismatched.append((key, tuple(value.shape), tuple(model_state[key].shape)))
+                continue
+            filtered_state[key] = value
+        if mismatched:
+            print("[FlashACE] Skipping mismatched checkpoint tensors:")
+            for key, old_shape, new_shape in mismatched:
+                print(f"  - {key}: checkpoint {old_shape} vs model {new_shape}")
+        self.model.load_state_dict(filtered_state, strict=False)
         self.model.to(self.device)
         self.model.eval()
 
