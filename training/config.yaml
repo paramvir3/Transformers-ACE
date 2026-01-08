@@ -40,20 +40,7 @@ envelope_exponent: 5            # Polynomial cutoff exponent (higher = steeper)
 gaussian_width: 0.5             # Relative Gaussian width multiplier (only used if basis=gaussian)
 radial_mlp_hidden: 64           # Hidden width for the radial mixing MLP
 radial_mlp_layers: 2            # Layers for the radial mixing MLP
-descriptor_backend: "ace"       # ace or tace (requires TACE dependency)
-tace_atomic_numbers: null       # List of atomic numbers for TACE one-hot embedding
-tace_num_layers: 2              # TACE descriptor layers
-tace_Lmax: 1                    # TACE max rank per layer (int or list)
-tace_lmax: 1                    # TACE angular max per layer (int or list)
-tace_avg_num_neighbors: 64      # TACE neighbor normalization
-tace_num_channel: 64            # TACE channels (int or list per layer)
-tace_num_channel_hidden: 64     # TACE hidden channels (int or list per layer)
-tace_radial_basis: null         # TACE radial basis config (null uses TACE defaults)
-tace_angular_basis: null        # TACE angular basis config (null uses TACE defaults)
-tace_radial_mlp: null           # TACE radial MLP config (null uses TACE defaults)
-tace_inter: null                # TACE interaction config (null uses TACE defaults)
-tace_prod: null                 # TACE product config (null uses TACE defaults)
-tace_universal_embedding: null  # TACE universal embedding config
+descriptor_backend: "pt"        # PT-only embedding (no message passing)
 
 # ------------------------------------------------------------------------------
 # 3. TRAINING PARAMETERS

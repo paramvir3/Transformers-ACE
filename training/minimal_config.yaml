@@ -18,20 +18,7 @@ pt_factorized: false
 pt_l_max: null
 pt_radial_mlp_hidden: 64
 pt_radial_mlp_layers: 2
-descriptor_backend: "ace"
-tace_atomic_numbers: null
-tace_num_layers: 2
-tace_Lmax: 1
-tace_lmax: 1
-tace_avg_num_neighbors: 64
-tace_num_channel: 64
-tace_num_channel_hidden: 64
-tace_radial_basis: null
-tace_angular_basis: null
-tace_radial_mlp: null
-tace_inter: null
-tace_prod: null
-tace_universal_embedding: null
+descriptor_backend: "pt"
 
 epochs: 10
 batch_size: 4

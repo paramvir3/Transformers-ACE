@@ -852,20 +852,7 @@ class FlashACE(nn.Module):
         pt_radial_mlp_hidden: int = 64,
         pt_radial_mlp_layers: int = 2,
         readout_hidden_dims: list[int] | None = None,
-        descriptor_backend: str = "ace",
-        tace_atomic_numbers: list[int] | None = None,
-        tace_num_layers: int = 2,
-        tace_Lmax: int | list[int] = 1,
-        tace_lmax: int | list[int] = 1,
-        tace_avg_num_neighbors: int = 64,
-        tace_num_channel: int | list[int] = 64,
-        tace_num_channel_hidden: int | list[int] = 64,
-        tace_radial_basis: dict | None = None,
-        tace_angular_basis: dict | None = None,
-        tace_radial_mlp: dict | None = None,
-        tace_inter: dict | None = None,
-        tace_prod: dict | None = None,
-        tace_universal_embedding: dict | None = None,
+        descriptor_backend: str = "pt",
     ):
         super().__init__()
         self.hidden_dim = hidden_dim
@@ -874,42 +861,10 @@ class FlashACE(nn.Module):
         self.descriptor_residual = bool(descriptor_residual)
         self.descriptor_backend = descriptor_backend
 
-        if self.descriptor_backend == "tace":
-            if not tace_atomic_numbers:
-                raise ValueError("tace_atomic_numbers must be provided when using descriptor_backend='tace'")
-            self.tace_backbone = TACEBackbone(
-                r_max=r_max,
-                hidden_dim=hidden_dim,
-                atomic_numbers=tace_atomic_numbers,
-                num_layers=tace_num_layers,
-                Lmax=tace_Lmax,
-                lmax=tace_lmax,
-                avg_num_neighbors=tace_avg_num_neighbors,
-                num_channel=tace_num_channel,
-                num_channel_hidden=tace_num_channel_hidden,
-                radial_basis=tace_radial_basis,
-                angular_basis=tace_angular_basis,
-                radial_mlp=tace_radial_mlp,
-                inter=tace_inter,
-                prod=tace_prod,
-                universal_embedding=tace_universal_embedding,
-            )
-            self.emb = None
-            self.ace = None
-        else:
-            self.emb = nn.Embedding(118, hidden_dim)
-            self.ace = ACE_Descriptor(
-                r_max,
-                l_max,
-                num_radial,
-                hidden_dim,
-                radial_basis_type=radial_basis_type,
-                radial_trainable=radial_trainable,
-                envelope_exponent=envelope_exponent,
-                gaussian_width=gaussian_width,
-                radial_mlp_hidden=radial_mlp_hidden,
-                radial_mlp_layers=radial_mlp_layers,
-            )
+        if self.descriptor_backend != "pt":
+            raise ValueError("descriptor_backend must be 'pt' to avoid message passing.")
+        self.emb = nn.Embedding(118, hidden_dim)
+        self.ace = None
         scalar_ffn_hidden = pt_ffn_hidden or hidden_dim * 4
         self.pt_layers = nn.ModuleList([])
         if pt_factorized:
@@ -1020,18 +975,8 @@ class FlashACE(nn.Module):
         edge_vec = pos[edge_index[0]] - pos[edge_index[1]]
         edge_len = torch.norm(edge_vec, dim=1)
 
-        # 1. Descriptor iterations (optionally residual) before message passing / attention.
-        if self.descriptor_backend == "tace":
-            h = self.tace_backbone(z, pos, edge_index)
-        else:
-            h = self.emb(z)
-            for i in range(self.descriptor_passes):
-                scalars = h[..., : self.hidden_dim]
-                desc = self.ace(scalars, edge_index, edge_vec, edge_len)
-                if i == 0 or not self.descriptor_residual:
-                    h = desc
-                else:
-                    h = h + desc
+        # 1. PT-only embedding (no descriptor/message passing).
+        h = self.emb(z)
 
         edge_index = self._ensure_self_edges(edge_index, h.shape[0], h.device)
         scalars = h[:, : self.hidden_dim]
