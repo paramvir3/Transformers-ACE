@@ -1,0 +1,44 @@
+# Minimal config for ACE + PointTransformer training
+# Fill in dataset path as needed.
+train_file: "data.extxyz"
+valid_file: null
+val_split: 0.1
+split_seed: 42
+stratified_val_bins: 0
+model_save_path: "model.pt"
+
+r_max: 5
+l_max: 0
+num_radial: 8
+hidden_dim: 64
+num_layers: 1
+readout_hidden_dims: [32]
+max_neighbors: 0
+pt_factorized: false
+pt_l_max: null
+pt_radial_mlp_hidden: 64
+pt_radial_mlp_layers: 2
+descriptor_backend: "ace"
+tace_atomic_numbers: null
+tace_num_layers: 2
+tace_Lmax: 1
+tace_lmax: 1
+tace_avg_num_neighbors: 64
+tace_num_channel: 64
+tace_num_channel_hidden: 64
+tace_radial_basis: {}
+tace_angular_basis: {}
+tace_radial_mlp: {}
+tace_inter: {}
+tace_prod: {}
+tace_universal_embedding: {}
+
+epochs: 10
+batch_size: 4
+learning_rate: 0.001
+weight_decay: 0.0
+device: "cuda"
+
+energy_weight: 1.0
+forces_weight: 1.0
+stress_weight: 0.0
