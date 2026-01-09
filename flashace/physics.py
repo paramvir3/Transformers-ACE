@@ -258,3 +258,74 @@ class ACE_Descriptor(nn.Module):
 
         # Mix and Add Residual
         return self.mix(B_basis) + A_basis
+
+
+def _cartesian_tensors(unit_vec: torch.Tensor, lmax: int) -> torch.Tensor:
+    num_edges = unit_vec.shape[0]
+    tensors = [torch.ones((num_edges, 1), device=unit_vec.device, dtype=unit_vec.dtype)]
+    if lmax <= 0:
+        return tensors[0]
+    prev = unit_vec
+    tensors.append(prev)
+    for _ in range(2, lmax + 1):
+        prev_flat = prev.reshape(num_edges, -1)
+        expanded = torch.einsum("bi,bj->bij", unit_vec, prev_flat)
+        prev = expanded.reshape(num_edges, -1)
+        tensors.append(prev)
+    return torch.cat(tensors, dim=-1)
+
+
+class TACE_Descriptor(nn.Module):
+    """Lightweight Cartesian tensor descriptor inspired by TACE."""
+
+    def __init__(
+        self,
+        r_max: float,
+        num_radial: int,
+        lmax: int,
+        node_dim: int,
+        hidden_dim: int,
+        radial_basis_type: str = "bessel",
+        radial_trainable: bool = False,
+        envelope_exponent: int = 5,
+        gaussian_width: float = 0.5,
+        radial_mlp_hidden: int = 64,
+        radial_mlp_layers: int = 2,
+    ) -> None:
+        super().__init__()
+        self.r_max = float(r_max)
+        self.lmax = int(lmax)
+        self.node_dim = int(node_dim)
+        self.radial_basis = ACERadialBasis(
+            r_max,
+            num_radial,
+            envelope_exponent=envelope_exponent,
+            basis_type=radial_basis_type,
+            trainable=radial_trainable,
+            gaussian_width=gaussian_width,
+        )
+        cart_dim = sum(3 ** l for l in range(self.lmax + 1))
+        self.edge_mlp = _make_mlp(
+            in_dim=self.node_dim + num_radial + cart_dim,
+            hidden_dim=radial_mlp_hidden,
+            out_dim=hidden_dim,
+            depth=max(1, int(radial_mlp_layers)),
+        )
+
+    def forward(self, node_attrs, edge_index, edge_vec, edge_len):
+        sender, receiver = edge_index
+        if sender.numel() == 0:
+            return torch.zeros(
+                (node_attrs.shape[0], self.edge_mlp[-1].out_features),
+                device=node_attrs.device,
+                dtype=node_attrs.dtype,
+            )
+        radial_emb = self.radial_basis(edge_len)
+        unit_vec = edge_vec / (edge_len.unsqueeze(-1) + 1e-9)
+        cart = _cartesian_tensors(unit_vec, self.lmax)
+        node_in = node_attrs[sender]
+        edge_in = torch.cat([node_in, radial_emb, cart], dim=-1)
+        msg = self.edge_mlp(edge_in)
+        agg = torch.zeros((node_attrs.shape[0], msg.shape[-1]), device=msg.device, dtype=msg.dtype)
+        agg.index_add_(0, receiver, msg)
+        return agg

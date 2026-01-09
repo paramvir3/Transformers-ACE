@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from e3nn import o3
-from .physics import ACE_Descriptor, ACERadialBasis
+from .physics import ACE_Descriptor, ACERadialBasis, TACE_Descriptor
 
 try:
     import torch_scatter
@@ -853,6 +853,7 @@ class TACEBackbone(nn.Module):
         r_max: float,
         hidden_dim: int,
         atomic_numbers: list[int],
+        num_radial: int,
         num_layers: int,
         Lmax: int | list[int],
         lmax: int | list[int],
@@ -868,17 +869,6 @@ class TACEBackbone(nn.Module):
         bias: bool = False,
     ):
         super().__init__()
-        from tace.models.v1.representation import TACEDescriptor
-        from tace.models.v1.utils import Graph as TACEGraph
-        from tace.models.v1.default import (
-            RADIAL_BASIS,
-            ANGULAR_BASIS,
-            RADIAL_MLP,
-            INTER,
-            PROD,
-        )
-
-        self.tace_graph_cls = TACEGraph
         self.atomic_numbers = [int(z) for z in atomic_numbers]
         self.atomic_number_to_index = {int(z): i for i, z in enumerate(self.atomic_numbers)}
         self.num_layers = int(num_layers)
@@ -886,60 +876,22 @@ class TACEBackbone(nn.Module):
         lmax_list = _expand_list(lmax, self.num_layers, "tace_lmax")
         num_channel_list = _expand_list(num_channel, self.num_layers, "tace_num_channel")
         num_channel_hidden_list = _expand_list(num_channel_hidden, self.num_layers, "tace_num_channel_hidden")
-        radial_basis = RADIAL_BASIS if radial_basis is None else radial_basis
-        angular_basis = ANGULAR_BASIS if angular_basis is None else angular_basis
-        radial_mlp = RADIAL_MLP if radial_mlp is None else radial_mlp
-        inter = INTER if inter is None else inter
-        prod = PROD if prod is None else prod
-        universal_embedding = universal_embedding or {
-            "invariant_embedding_property": [],
-            "equivariant_embedding_property": [],
-        }
-
-        self.descriptor = TACEDescriptor(
-            cutoff=float(r_max),
-            avg_num_neighbors=int(avg_num_neighbors),
-            num_layers=self.num_layers,
-            atomic_numbers=self.atomic_numbers,
-            Lmax=Lmax_list,
-            lmax=lmax_list,
-            num_channel=num_channel_list,
-            num_channel_hidden=num_channel_hidden_list,
-            bias=bool(bias),
-            radial_basis=radial_basis,
-            angular_basis=angular_basis,
-            radial_mlp=radial_mlp,
-            inter=inter,
-            prod=prod,
-            universal_embedding=universal_embedding,
-            target_irreps=[0],
+        radial_basis = radial_basis or {}
+        radial_mlp = radial_mlp or {}
+        self.descriptor = TACE_Descriptor(
+            r_max=r_max,
+            num_radial=num_radial,
+            lmax=max(lmax_list),
+            node_dim=num_channel_list[-1],
+            hidden_dim=num_channel_hidden_list[-1],
+            radial_basis_type=radial_basis.get("radial_basis", "bessel"),
+            radial_trainable=radial_basis.get("trainable", False),
+            envelope_exponent=radial_basis.get("polynomial_cutoff", 5),
+            gaussian_width=radial_basis.get("gaussian_width", 0.5),
+            radial_mlp_hidden=radial_mlp.get("hidden_dim", 64),
+            radial_mlp_layers=radial_mlp.get("num_layers", 2),
         )
-        self.proj = nn.Linear(num_channel_list[-1], hidden_dim)
-
-    def _build_graph(self, pos: torch.Tensor, edge_index: torch.Tensor) -> object:
-        sender, receiver = edge_index
-        edge_vector = pos[receiver] - pos[sender]
-        edge_length = torch.norm(edge_vector, dim=1, keepdim=True) + 1e-9
-        num_atoms = pos.shape[0]
-        dtype = pos.dtype
-        device = pos.device
-        lattice = torch.zeros((1, 3, 3), dtype=dtype, device=device)
-        node_level = torch.zeros(num_atoms, dtype=torch.int64, device=device)
-        num_atoms_arange = torch.arange(num_atoms, dtype=torch.int64, device=device)
-        displacement = torch.zeros((1, 3, 3), dtype=dtype, device=device)
-        return self.tace_graph_cls(
-            lmp=False,
-            lmp_data=None,
-            lmp_natoms=(num_atoms, 0),
-            num_graphs=1,
-            displacement=displacement,
-            positions=pos,
-            edge_vector=edge_vector,
-            edge_length=edge_length,
-            lattice=lattice,
-            node_level=node_level,
-            num_atoms_arange=num_atoms_arange,
-        )
+        self.proj = nn.Linear(num_channel_hidden_list[-1], hidden_dim)
 
     def _one_hot(self, z: torch.Tensor) -> torch.Tensor:
         num_atoms = z.shape[0]
@@ -956,16 +908,10 @@ class TACEBackbone(nn.Module):
 
     def forward(self, z: torch.Tensor, pos: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
         node_attrs = self._one_hot(z)
-        data = {
-            "node_attrs": node_attrs,
-            "edge_index": edge_index,
-            "batch": torch.zeros(z.shape[0], dtype=torch.int64, device=z.device),
-        }
-        graph = self._build_graph(pos, edge_index)
-        outputs = self.descriptor(data, graph)
-        descriptors = outputs["descriptors"][-1]
-        scalars = descriptors[0]
-        return self.proj(scalars)
+        edge_vec = pos[edge_index[0]] - pos[edge_index[1]]
+        edge_len = torch.norm(edge_vec, dim=1)
+        desc = self.descriptor(node_attrs, edge_index, edge_vec, edge_len)
+        return self.proj(desc)
 
 class FlashACE(nn.Module):
     def __init__(
@@ -1035,6 +981,7 @@ class FlashACE(nn.Module):
             self.tace_backbone = TACEBackbone(
                 r_max=r_max,
                 hidden_dim=hidden_dim,
+                num_radial=num_radial,
                 atomic_numbers=tace_atomic_numbers,
                 num_layers=tace_num_layers,
                 Lmax=tace_Lmax,
