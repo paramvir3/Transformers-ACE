@@ -93,6 +93,16 @@ class GaussianBasis(nn.Module):
         return torch.exp(-0.5 * (diff / self.widths).pow(2))
 
 
+def _make_mlp(in_dim: int, hidden_dim: int, out_dim: int, depth: int) -> nn.Sequential:
+    if depth <= 1:
+        return nn.Sequential(nn.Linear(in_dim, out_dim))
+    layers = [nn.Linear(in_dim, hidden_dim), nn.SiLU()]
+    for _ in range(depth - 2):
+        layers.extend([nn.Linear(hidden_dim, hidden_dim), nn.SiLU()])
+    layers.append(nn.Linear(hidden_dim, out_dim))
+    return nn.Sequential(*layers)
+
+
 class ACERadialBasis(nn.Module):
     """Cutoff-masked radial basis with Bessel or Gaussian options."""
 
