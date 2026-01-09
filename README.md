@@ -15,6 +15,12 @@ Example:
 python train.py --config training/config.yaml
 ```
 
+Minimal example:
+
+```bash
+python train.py --config training/minimal_config.yaml
+```
+
 
 ## The main problem 
 
