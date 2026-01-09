@@ -430,6 +430,12 @@ def main():
         energy_shift_per_atom = compute_mean_energy_per_atom(train_atoms)
         print(f"Computed mean energy per atom for normalization: {energy_shift_per_atom:.6f} eV")
 
+    if config.get('descriptor_backend', 'tace') == 'tace' and not config.get('tace_atomic_numbers'):
+        unique_z = sorted({int(z) for atoms in train_atoms for z in atoms.numbers})
+        config['tace_atomic_numbers'] = unique_z
+        pretty = ", ".join(str(z) for z in unique_z)
+        print(f"Inferred TACE atomic numbers from training data: [{pretty}]")
+
     # DATALOADERS
     train_ds = AtomisticDataset(
         train_atoms,
