@@ -878,11 +878,14 @@ class TACEBackbone(nn.Module):
         num_channel_hidden_list = _expand_list(num_channel_hidden, self.num_layers, "tace_num_channel_hidden")
         radial_basis = radial_basis or {}
         radial_mlp = radial_mlp or {}
+        node_dim = len(self.atomic_numbers)
+        if node_dim == 0:
+            raise ValueError("tace_atomic_numbers must include at least one element.")
         self.descriptor = TACE_Descriptor(
             r_max=r_max,
             num_radial=num_radial,
             lmax=max(lmax_list),
-            node_dim=num_channel_list[-1],
+            node_dim=node_dim,
             hidden_dim=num_channel_hidden_list[-1],
             radial_basis_type=radial_basis.get("radial_basis", "bessel"),
             radial_trainable=radial_basis.get("trainable", False),
