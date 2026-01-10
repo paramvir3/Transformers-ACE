@@ -360,6 +360,8 @@ class TACE_Descriptor(nn.Module):
         for edge_mlp, contract_mlp in zip(self.edge_mlps, self.contract_mlps):
             msg = edge_mlp(edge_in)
             agg = torch.zeros_like(h)
+            if msg.dtype != agg.dtype:
+                msg = msg.to(agg.dtype)
             agg.index_add_(0, receiver, msg)
             contracted = contract_mlp(torch.cat([agg, agg * agg], dim=-1))
             h = h + agg + contracted
