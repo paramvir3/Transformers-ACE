@@ -887,6 +887,7 @@ class TACEBackbone(nn.Module):
             lmax=max(lmax_list),
             node_dim=node_dim,
             hidden_dim=num_channel_hidden_list[-1],
+            num_layers=self.num_layers,
             radial_basis_type=radial_basis.get("radial_basis", "bessel"),
             radial_trainable=radial_basis.get("trainable", False),
             envelope_exponent=radial_basis.get("polynomial_cutoff", 5),

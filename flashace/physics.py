@@ -286,7 +286,7 @@ def _cartesian_tensors(unit_vec: torch.Tensor, lmax: int) -> torch.Tensor:
 
 
 class TACE_Descriptor(nn.Module):
-    """Lightweight Cartesian tensor descriptor inspired by TACE."""
+    """Cartesian tensor descriptor with interaction + contraction stages."""
 
     def __init__(
         self,
@@ -295,6 +295,7 @@ class TACE_Descriptor(nn.Module):
         lmax: int,
         node_dim: int,
         hidden_dim: int,
+        num_layers: int,
         radial_basis_type: str = "bessel",
         radial_trainable: bool = False,
         envelope_exponent: int = 5,
@@ -306,6 +307,8 @@ class TACE_Descriptor(nn.Module):
         self.r_max = float(r_max)
         self.lmax = int(lmax)
         self.node_dim = int(node_dim)
+        self.hidden_dim = int(hidden_dim)
+        self.num_layers = max(1, int(num_layers))
         self.radial_basis = ACERadialBasis(
             r_max,
             num_radial,
@@ -315,18 +318,35 @@ class TACE_Descriptor(nn.Module):
             gaussian_width=gaussian_width,
         )
         cart_dim = sum(3 ** l for l in range(self.lmax + 1))
-        self.edge_mlp = _make_mlp(
-            in_dim=self.node_dim + num_radial + cart_dim,
-            hidden_dim=radial_mlp_hidden,
-            out_dim=hidden_dim,
-            depth=max(1, int(radial_mlp_layers)),
+        edge_in_dim = self.node_dim + num_radial + cart_dim
+        self.edge_mlps = nn.ModuleList(
+            [
+                _make_mlp(
+                    in_dim=edge_in_dim,
+                    hidden_dim=radial_mlp_hidden,
+                    out_dim=self.hidden_dim,
+                    depth=max(1, int(radial_mlp_layers)),
+                )
+                for _ in range(self.num_layers)
+            ]
+        )
+        self.contract_mlps = nn.ModuleList(
+            [
+                _make_mlp(
+                    in_dim=self.hidden_dim * 2,
+                    hidden_dim=radial_mlp_hidden,
+                    out_dim=self.hidden_dim,
+                    depth=max(1, int(radial_mlp_layers)),
+                )
+                for _ in range(self.num_layers)
+            ]
         )
 
     def forward(self, node_attrs, edge_index, edge_vec, edge_len):
         sender, receiver = edge_index
         if sender.numel() == 0:
             return torch.zeros(
-                (node_attrs.shape[0], self.edge_mlp[-1].out_features),
+                (node_attrs.shape[0], self.hidden_dim),
                 device=node_attrs.device,
                 dtype=node_attrs.dtype,
             )
@@ -335,7 +355,12 @@ class TACE_Descriptor(nn.Module):
         cart = _cartesian_tensors(unit_vec, self.lmax)
         node_in = node_attrs[sender]
         edge_in = torch.cat([node_in, radial_emb, cart], dim=-1)
-        msg = self.edge_mlp(edge_in)
-        agg = torch.zeros((node_attrs.shape[0], msg.shape[-1]), device=msg.device, dtype=msg.dtype)
-        agg.index_add_(0, receiver, msg)
-        return agg
+
+        h = torch.zeros((node_attrs.shape[0], self.hidden_dim), device=node_attrs.device, dtype=node_attrs.dtype)
+        for edge_mlp, contract_mlp in zip(self.edge_mlps, self.contract_mlps):
+            msg = edge_mlp(edge_in)
+            agg = torch.zeros_like(h)
+            agg.index_add_(0, receiver, msg)
+            contracted = contract_mlp(torch.cat([agg, agg * agg], dim=-1))
+            h = h + agg + contracted
+        return h
