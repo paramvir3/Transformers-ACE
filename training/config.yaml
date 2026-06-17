@@ -3,7 +3,7 @@
 # ------------------------------------------------------------------------------
 # 1. DATASETS
 # ------------------------------------------------------------------------------
-train_file: "data_2.extxyz"    # Your full dataset
+train_file: "training/data_2.extxyz" # Your full dataset
 valid_file: null                  # Leave null to use random split
 val_split: 0.1                    # 10% of data used for validation (randomly selected)
 model_save_path: "model.pt"
@@ -18,13 +18,13 @@ hidden_dim: 128
 num_layers: 2
 descriptor_passes: 1            # Number of ACE descriptor iterations before attention
 descriptor_residual: true       # Add descriptor outputs residually across passes
-message_passing_layers: 0        # Optional scalar-only message passing steps before attention
-interleave_descriptor: false     # Refresh descriptor between attention blocks
-edge_update_per_layer: false     # Apply a scalar edge update before each attention block
-node_update_mlp: false           # Apply per-block node MLP after attention
-transformer_num_heads: 4         # Multi-head attention heads for transformer blocks
-transformer_ffn_hidden: null     # Hidden width for FFN (defaults to 4x feature dim)
-transformer_dropout: 0.0         # Dropout in transformer attention/FFN
+interleave_descriptor: false     # Refresh ACE descriptors between local attention blocks
+attention_num_heads: 4           # Local invariant attention heads over cutoff neighbors
+attention_key_dim: null          # Per-head scalar key width (null chooses a conservative default)
+attention_ffn_hidden: null       # Scalar FFN width after equivariant attention
+attention_dropout: 0.0           # Dropout in local attention/FFN
+attention_layer_scale_init: 0.01 # Small residual scale for stable deep local attention
+attention_distance_penalty: true # Penalize long local edges in attention logits
 radial_basis_type: "bessel"       # Options: bessel, gaussian
 radial_trainable: false           # Make radial frequencies/centers learnable
 envelope_exponent: 5              # Polynomial cutoff exponent (higher = steeper)
@@ -64,7 +64,7 @@ resume_load_scaler: false        # Load AMP GradScaler state when resuming
 use_checkpoint_energy_shift: true # Use the energy shift stored in the checkpoint when resuming
 energy_shift_per_atom: null       # Constant shift to subtract during training (eV/atom)
 atomic_energies: null             # Map of species reference energies, e.g. {H: -0.5, O: -17.0}
-solve_atomic_energies: false      # Fit species reference energies from the training set like NequIP/MACE
+solve_atomic_energies: false      # Fit per-species reference energies from the training set
 
 # ------------------------------------------------------------------------------
 # 4. LOSS WEIGHTS
@@ -73,12 +73,12 @@ energy_weight: 1.0
 forces_weight: 10.0              # Emphasize forces early
 forces_weight_final: 10.0        # Optional target force weight to anneal toward
 forces_weight_decay_epochs: 0    # Epochs to linearly decay force weight (0 = no decay)
-stress_weight: 0.0               # Disable unless stresses are critical
+stress_weight: 1.0               # Energy-derived stress loss; set 0 to disable
 
 # Auxiliary and regularization weights
-aux_force_weight: 0.1            # Small multi-task force head weight
+aux_force_weight: 0.0            # Direct force heads are disabled to keep forces conservative
 aux_stress_weight: 0.0           # Disable aux stress by default
-force_consistency_weight: 0.02   # Conservative force consistency
+force_consistency_weight: 0.0    # Forces already come from -dE/dr
 sobolev_weight: 0.001            # Very light perturbation regularization
 sobolev_sigma: 0.02
 

@@ -7,11 +7,10 @@ from e3nn.nn import FullyConnectedNet
 
 
 class PolynomialCutoff(nn.Module):
-    """Smooth polynomial envelope used in MACE's radial basis.
+    """Smooth polynomial cutoff for local ACE radial features.
 
     The expression ``1 - (p + 1) * x**p + p * x**(p + 1)`` forces both the value and
-    first derivative to vanish at the cutoff, matching the formulation in
-    mace/modules/radial.py.
+    first derivative to vanish at the cutoff.
     """
 
     def __init__(self, r_max: float, p: int = 5):
@@ -26,7 +25,7 @@ class PolynomialCutoff(nn.Module):
 
 
 class BesselBasis(nn.Module):
-    """Bessel basis with normalization matching mace/modules/radial.py.
+    """Bessel radial basis for cutoff-local ACE descriptors.
 
     Setting ``trainable=True`` makes the frequencies learnable, similar to the
     adaptive radial grids explored in GRACE and NequIP variants that refine the
@@ -138,7 +137,7 @@ class ACE_Descriptor(nn.Module):
         self.r_max = r_max
         self.num_radial = num_radial
         
-        # 1. SMART SYMMETRIES (NequIP/ACE Strategy)
+        # 1. Local ACE angular channels
         # ------------------------------------------------------------------
         # Instead of giving 'hidden_dim' to everything, we taper it down.
         # Scalars (L=0) get full resolution (Chemistry).
@@ -177,10 +176,8 @@ class ACE_Descriptor(nn.Module):
         )
         self.sh = o3.SphericalHarmonics(self.irreps_sh, normalize=True, normalization="component")
 
-        # In MACE, the radial network provides the weights for the tensor
-        # product that mixes atomic scalars with spherical harmonics. We mimic
-        # that by disabling internal weights on the tensor product and feeding
-        # in a learned radial-dependent weight vector at runtime.
+        # Radial functions provide edge-dependent tensor-product weights that
+        # mix chemical scalar channels with spherical harmonics.
         self.tp_a = o3.FullyConnectedTensorProduct(
             self.irreps_node,
             self.irreps_sh,
@@ -194,12 +191,8 @@ class ACE_Descriptor(nn.Module):
         self.radial_net = FullyConnectedNet(mlp_sizes, torch.nn.functional.silu)
 
         # 3. B-Basis (Symmetric Contraction)
-        # In MACE the B-basis is a pure Clebsch–Gordan contraction of A-basis
-        # channels with no additional learned weights inside the tensor
-        # product; the only learnable mixing happens in the following linear
-        # layer. Matching that behavior requires ``internal_weights=False`` and
-        # ``shared_weights=False`` so that the tensor product exactly mirrors
-        # the ACE construction before being remixed.
+        # The B-basis is a Clebsch-Gordan contraction of local A-basis channels;
+        # learned mixing happens after the contraction.
         self.tp_b = o3.FullyConnectedTensorProduct(
             self.irreps_out,
             self.irreps_out,
@@ -225,8 +218,7 @@ class ACE_Descriptor(nn.Module):
         Y_lm = self.sh(edge_vec)
         tp_weights = self.radial_net(radial_emb)
 
-        # Zero out contributions beyond the cutoff exactly as in MACE. The
-        # radial basis already vanishes at ``r_max`` but masking protects the
+        # The radial basis already vanishes at ``r_max`` but masking protects the
         # downstream tensor products from spurious numerical noise when edges
         # are padded or left over from a larger neighbor list.
         edge_mask = (edge_len <= self.r_max).unsqueeze(-1)
@@ -234,8 +226,8 @@ class ACE_Descriptor(nn.Module):
         # Incorporate atomic attributes on the sending atoms and gate the
         # tensor product weights with the learned radial functions before
         # combining with the spherical harmonics. This mirrors the ACE
-        # construction used by MACE, where chemical identity enters the
-        # A-basis through the tensor-product weights.
+        # construction where chemical identity enters the A-basis through the
+        # tensor-product weights.
         node_feats = node_attrs[sender]
         edge_feats = self.tp_a(node_feats, Y_lm, tp_weights)
         edge_feats = edge_feats * edge_mask

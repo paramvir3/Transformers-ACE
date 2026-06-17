@@ -64,10 +64,32 @@ def save_checkpoint(path, epoch, model, optimizer, scheduler, scaler, config, en
             'use_amp': config.get('use_amp', False),
             'grad_accum_steps': max(1, int(config.get('grad_accum_steps', 1))),
             'precompute_neighbors': config.get('precompute_neighbors', False),
+            'descriptor_passes': config.get('descriptor_passes', 1),
+            'descriptor_residual': config.get('descriptor_residual', True),
+            'radial_mlp_hidden': config.get('radial_mlp_hidden', 64),
+            'radial_mlp_layers': config.get('radial_mlp_layers', 2),
+            'attention_num_heads': config.get('attention_num_heads', config.get('transformer_num_heads', 4)),
+            'attention_key_dim': config.get('attention_key_dim', None),
+            'attention_ffn_hidden': config.get('attention_ffn_hidden', config.get('transformer_ffn_hidden', None)),
+            'attention_dropout': config.get('attention_dropout', config.get('transformer_dropout', 0.0)),
+            'attention_layer_scale_init': config.get('attention_layer_scale_init', 1e-2),
+            'attention_distance_penalty': config.get('attention_distance_penalty', True),
         }
     }
     torch.save(checkpoint, path)
     print(f"Saved checkpoint to {path}")
+
+
+def build_neighbor_tensors(atoms, r_max):
+    """Return neighbor-to-center edges plus periodic shifts from ASE."""
+    i, j, shifts = neighbor_list('ijS', atoms, r_max)
+    edge_index = torch.stack(
+        [torch.tensor(j, dtype=torch.long), torch.tensor(i, dtype=torch.long)],
+        dim=0,
+    )
+    edge_shift = torch.tensor(shifts, dtype=torch.float32)
+    return edge_index, edge_shift
+
 
 class AtomisticDataset(Dataset):
     def __init__(self, atoms_list, r_max, random_rotation=False, precompute_neighbors=False):
@@ -80,11 +102,7 @@ class AtomisticDataset(Dataset):
         if precompute_neighbors:
             self._edge_cache = []
             for atoms in atoms_list:
-                i, j = neighbor_list('ij', atoms, self.r_max)
-                edge_index = torch.stack(
-                    [torch.tensor(i, dtype=torch.long), torch.tensor(j, dtype=torch.long)], dim=0
-                )
-                self._edge_cache.append(edge_index)
+                self._edge_cache.append(build_neighbor_tensors(atoms, self.r_max))
         
     def __len__(self): return len(self.atoms_list)
     
@@ -94,6 +112,7 @@ class AtomisticDataset(Dataset):
         # Geometry
         z = torch.tensor(atoms.numbers, dtype=torch.long)
         pos = torch.tensor(atoms.positions, dtype=torch.float32)
+        cell = torch.tensor(atoms.cell.array, dtype=torch.float32)
         vol = torch.tensor(atoms.get_volume(), dtype=torch.float32)
         
         # Targets
@@ -130,18 +149,26 @@ class AtomisticDataset(Dataset):
             # while forces/stresses are rotated consistently.
             rot = o3.rand_matrix().to(dtype=pos.dtype)
             pos = pos @ rot.T
+            cell = cell @ rot.T
             t_F = t_F @ rot.T
             t_S = rot @ t_S @ rot.T
 
         if self._edge_cache is not None:
-            edge_index = self._edge_cache[idx]
+            edge_index, edge_shift = self._edge_cache[idx]
         else:
-            i, j = neighbor_list('ij', atoms, self.r_max)
-            edge_index = torch.stack(
-                [torch.tensor(i, dtype=torch.long), torch.tensor(j, dtype=torch.long)], dim=0
-            )
+            edge_index, edge_shift = build_neighbor_tensors(atoms, self.r_max)
 
-        return {'z':z, 'pos':pos, 'edge_index':edge_index, 'volume':vol, 't_E':t_E, 't_F':t_F, 't_S':t_S}
+        return {
+            'z': z,
+            'pos': pos,
+            'cell': cell,
+            'edge_index': edge_index,
+            'edge_shift': edge_shift,
+            'volume': vol,
+            't_E': t_E,
+            't_F': t_F,
+            't_S': t_S,
+        }
     
     @staticmethod
     def collate_fn(batch): return batch
@@ -157,7 +184,7 @@ class MetricTracker:
         err_e = (p_E - t_E).item() / n_ats
         self.sse_e += err_e**2 * n_ats
         diff_f = p_F - t_F
-        # Per-structure force MSE/MAE averaged over 3N components (NequIP-style).
+        # Per-structure force MSE/MAE averaged over 3N components.
         force_mse = diff_f.pow(2).mean().item()
         force_mae = diff_f.abs().mean().item()
         self.sum_force_mse += force_mse
@@ -187,7 +214,7 @@ def compute_mean_energy_per_atom(atoms_seq):
 def compute_atomic_energies_from_dataset(atoms_seq):
     """Solve for per-species reference energies via least squares.
 
-    Builds the standard NequIP/MACE-style linear system where each structure's
+    Builds the standard per-species linear system where each structure's
     total energy is expressed as the sum of per-species reference energies plus
     a residual. The least-squares solution provides offsets that remove most of
     the composition-dependent baseline from the supervised loss.
@@ -333,19 +360,19 @@ def main():
         radial_trainable=config.get('radial_trainable', False),
         envelope_exponent=config.get('envelope_exponent', 5),
         gaussian_width=config.get('gaussian_width', 0.5),
-        transformer_num_heads=config.get('transformer_num_heads', 4),
-        transformer_ffn_hidden=config.get('transformer_ffn_hidden', None),
-        transformer_dropout=config.get('transformer_dropout', 0.0),
+        attention_num_heads=config.get('attention_num_heads', config.get('transformer_num_heads', 4)),
+        attention_key_dim=config.get('attention_key_dim', None),
+        attention_ffn_hidden=config.get('attention_ffn_hidden', config.get('transformer_ffn_hidden', None)),
+        attention_dropout=config.get('attention_dropout', config.get('transformer_dropout', 0.0)),
+        attention_layer_scale_init=config.get('attention_layer_scale_init', 1e-2),
+        attention_distance_penalty=config.get('attention_distance_penalty', True),
         descriptor_passes=config.get('descriptor_passes', 1),
         descriptor_residual=config.get('descriptor_residual', True),
         radial_mlp_hidden=config.get('radial_mlp_hidden', 64),
         radial_mlp_layers=config.get('radial_mlp_layers', 2),
-        message_passing_layers=config.get('message_passing_layers', 0),
         interleave_descriptor=config.get('interleave_descriptor', False),
-        edge_update_per_layer=config.get('edge_update_per_layer', False),
-        node_update_mlp=config.get('node_update_mlp', False),
-        use_aux_force_head=config.get('use_aux_force_head', True),
-        use_aux_stress_head=config.get('use_aux_stress_head', True),
+        use_aux_force_head=False,
+        use_aux_stress_head=False,
     ).to(device)
     
     optimizer = optim.Adam(
@@ -540,11 +567,16 @@ def main():
                 # Standard Forward with optional AMP
                 with torch.autocast(device_type=device_type, dtype=amp_dtype, enabled=use_amp):
                     temp_scale = _temperature_scale(epoch, force_loss_ema)
+                    stress_target = (
+                        (torch.norm(item['t_S']) > 1e-6).item()
+                        and float(config.get('stress_weight', 0.0)) > 0.0
+                    )
                     p_E, p_F, p_S, aux = model(
                         item,
                         training=True,
                         temperature_scale=temp_scale,
                         detach_pos=force_consistency_weight <= 0.0,
+                        compute_stress=stress_target,
                     )
                     n_ats = len(item['z'])
 
@@ -552,12 +584,12 @@ def main():
                     loss_e = ((p_E - target_E) / n_ats)**2
                     loss_f = torch.mean((p_F - item['t_F'])**2)
                     loss_s = torch.tensor(0.0, device=device)
-                    if torch.norm(item['t_S']) > 1e-6:
+                    if stress_target:
                         loss_s = torch.mean((p_S - item['t_S'])**2)
 
-                        loss_item = (config['energy_weight']*loss_e) + \
-                                    (force_weight*loss_f) + \
-                                    (config['stress_weight']*loss_s)
+                    loss_item = (config['energy_weight'] * loss_e) + \
+                                (force_weight * loss_f) + \
+                                (config['stress_weight'] * loss_s)
 
                     if aux_force_weight > 0.0 and 'force' in aux:
                         loss_item = loss_item + aux_force_weight * torch.mean((aux['force'] - item['t_F'])**2)
@@ -579,6 +611,7 @@ def main():
                             training=True,
                             temperature_scale=temp_scale,
                             detach_pos=True,
+                            compute_stress=False,
                         )
                         fd = (p_E_pert - p_E) + (p_F.detach() * delta).sum()
                         loss_item = loss_item + sobolev_weight * fd.pow(2)
@@ -655,12 +688,27 @@ def main():
                 # still avoid higher-order graphs with ``create_graph=False``
                 # inside the model during validation.
                 with torch.autocast(device_type=device_type, dtype=amp_dtype, enabled=use_amp):
-                    p_E, p_F, p_S, _ = model(item, training=False)
+                    stress_target = (
+                        (torch.norm(item['t_S']) > 1e-6).item()
+                        and float(config.get('stress_weight', 0.0)) > 0.0
+                    )
+                    p_E, p_F, p_S, _ = model(
+                        item,
+                        training=False,
+                        compute_stress=stress_target,
+                    )
                     n_ats = len(item['z'])
                     target_E = item['t_E'] - baseline_energy(item['z'])
                     loss_e = ((p_E - target_E) / n_ats)**2
                     loss_f = torch.mean((p_F - item['t_F'])**2)
-                    val_loss_accum += (config['energy_weight']*loss_e) + (force_weight*loss_f)
+                    loss_s = torch.tensor(0.0, device=device)
+                    if stress_target:
+                        loss_s = torch.mean((p_S - item['t_S'])**2)
+                    val_loss_accum += (
+                        (config['energy_weight'] * loss_e)
+                        + (force_weight * loss_f)
+                        + (config['stress_weight'] * loss_s)
+                    )
 
                 pred_E_abs = p_E + baseline_energy(item['z'])
                 val_metrics.update(pred_E_abs, p_F, p_S, item['t_E'], item['t_F'], item['t_S'], n_ats)
