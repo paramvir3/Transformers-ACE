@@ -353,7 +353,7 @@ class FlashACE(nn.Module):
         # Avoid building second-order graphs during evaluation to reduce memory.
         grad_opts = {
             'create_graph': training,  # only keep graph for higher-order grads when training
-            'retain_graph': epsilon is not None,
+            'retain_graph': training or epsilon is not None,
             'allow_unused': True,
         }
 
