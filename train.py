@@ -344,13 +344,14 @@ def main():
         precompute_neighbors=config.get('precompute_neighbors', False),
     )
 
-    # Reduced workers to prevent CPU overhead issues
+    num_workers = int(config.get('num_workers', 2))
+    pin_memory = device_type == 'cuda'
     train_loader = DataLoader(train_ds, batch_size=config['batch_size'], 
                               collate_fn=AtomisticDataset.collate_fn, shuffle=True,
-                              num_workers=2, pin_memory=True)
+                              num_workers=num_workers, pin_memory=pin_memory)
     
     valid_loader = DataLoader(val_ds, batch_size=config['batch_size'], 
-                              collate_fn=AtomisticDataset.collate_fn, num_workers=2)
+                              collate_fn=AtomisticDataset.collate_fn, num_workers=num_workers)
 
     print("--- Initializing FlashACE ---")
     model = FlashACE(
