@@ -139,7 +139,7 @@ def main():
     table_path = args.output_dir / "relative_energies.csv"
     table_fields = [name for name in rows[0] if name != "label"]
     with table_path.open("w", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=table_fields)
+        writer = csv.DictWriter(handle, fieldnames=table_fields, lineterminator="\n")
         writer.writeheader()
         writer.writerows({name: row[name] for name in table_fields} for row in rows)
 

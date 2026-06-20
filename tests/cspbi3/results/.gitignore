@@ -1,2 +1,7 @@
 *
 !.gitignore
+!phase_energies.csv
+!relative_energies.csv
+!rE.png
+!rE.pdf
+!reproducibility.yaml

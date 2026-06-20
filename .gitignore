@@ -16,9 +16,17 @@ venv/
 *.pth
 checkpoints/
 
+# Published reproducibility bundle
+!training/train.extxyz
+!training/model.pt
+
 # Generated training artifacts
 plots/
 training/plots/
+!training/plots/
+training/plots/*
+!training/plots/training_curves.png
+!training/plots/training_history.csv
 
 # Generated CsPbI3 relaxation workspaces
 tests/cspbi3/alpha/
@@ -32,6 +40,10 @@ tests/cspbi3/rE.pdf
 tests/cspbi3/relative_energies.csv
 tests/cspbi3/results/*
 !tests/cspbi3/results/.gitignore
+!tests/cspbi3/results/phase_energies.csv
+!tests/cspbi3/results/relative_energies.csv
+!tests/cspbi3/results/rE.png
+!tests/cspbi3/results/rE.pdf
 
 # Machine-specific benchmark configuration
 flashace_cspbi3_50.yaml
