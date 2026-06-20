@@ -21,17 +21,17 @@ plots/
 training/plots/
 
 # Generated CsPbI3 relaxation workspaces
-phase_tests/cspbi3/alpha/
-phase_tests/cspbi3/beta/
-phase_tests/cspbi3/cubic/
-phase_tests/cspbi3/delta/
-phase_tests/cspbi3/gamma/
-phase_tests/cspbi3/ortho/
-phase_tests/cspbi3/rE.png
-phase_tests/cspbi3/rE.pdf
-phase_tests/cspbi3/relative_energies.csv
-phase_tests/cspbi3/results/*
-!phase_tests/cspbi3/results/.gitignore
+tests/cspbi3/alpha/
+tests/cspbi3/beta/
+tests/cspbi3/cubic/
+tests/cspbi3/delta/
+tests/cspbi3/gamma/
+tests/cspbi3/ortho/
+tests/cspbi3/rE.png
+tests/cspbi3/rE.pdf
+tests/cspbi3/relative_energies.csv
+tests/cspbi3/results/*
+!tests/cspbi3/results/.gitignore
 
 # Machine-specific benchmark configuration
 flashace_cspbi3_50.yaml

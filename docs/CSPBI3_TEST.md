@@ -18,7 +18,7 @@ Run all commands from the repository root with the Python environment activated.
 ## Single-Point Phase Energies
 
 ```bash
-python phase_tests/cspbi3/evaluate_phases.py \
+python tests/cspbi3/evaluate_phases.py \
   --model /absolute/path/to/model.pt \
   --device cpu
 ```
@@ -27,7 +27,7 @@ The default reference is edge-sharing delta, matching the source comparison.
 Use the checkpoint's predicted minimum as zero instead:
 
 ```bash
-python phase_tests/cspbi3/evaluate_phases.py \
+python tests/cspbi3/evaluate_phases.py \
   --model /absolute/path/to/model.pt \
   --device cpu \
   --reference minimum
@@ -36,7 +36,7 @@ python phase_tests/cspbi3/evaluate_phases.py \
 Results are written to:
 
 ```text
-phase_tests/cspbi3/results/phase_energies.csv
+tests/cspbi3/results/phase_energies.csv
 ```
 
 The table contains total energy, energy per formula unit, relative meV per
@@ -45,9 +45,9 @@ formula unit, relative kJ/mol, volume, and maximum atomic force.
 Plot the resulting relative energies:
 
 ```bash
-python phase_tests/cspbi3/plot_rl.py \
-  --csv phase_tests/cspbi3/results/phase_energies.csv \
-  --output-dir phase_tests/cspbi3/results
+python tests/cspbi3/plot_rl.py \
+  --csv tests/cspbi3/results/phase_energies.csv \
+  --output-dir tests/cspbi3/results
 ```
 
 ## Relax All Phases
@@ -55,7 +55,7 @@ python phase_tests/cspbi3/plot_rl.py \
 Relax positions while keeping the supplied cells fixed:
 
 ```bash
-python phase_tests/cspbi3/evaluate_phases.py \
+python tests/cspbi3/evaluate_phases.py \
   --model /absolute/path/to/model.pt \
   --device cpu \
   --relax --fmax 0.05 --steps 500
@@ -65,20 +65,20 @@ Add `--relax-cell` only after validating checkpoint stress against finite
 energy-strain differences:
 
 ```bash
-python phase_tests/cspbi3/evaluate_phases.py \
+python tests/cspbi3/evaluate_phases.py \
   --model /absolute/path/to/model.pt \
   --device cpu \
   --relax-cell --fmax 0.05 --steps 500
 ```
 
 Relaxed structures and optimization logs are saved under
-`phase_tests/cspbi3/results/relaxed/`.
+`tests/cspbi3/results/relaxed/`.
 
 ## Relax One Structure
 
 ```bash
-python phase_tests/cspbi3/relax_single.py \
-  --structure phase_tests/cspbi3/structures/orthorhombic_gamma_phase.vasp \
+python tests/cspbi3/relax_single.py \
+  --structure tests/cspbi3/structures/orthorhombic_gamma_phase.vasp \
   --model /absolute/path/to/model.pt \
   --device cpu \
   --repeat 1 1 1 \
