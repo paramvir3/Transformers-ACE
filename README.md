@@ -96,6 +96,10 @@ from transformers_ace import TransformersACE, TransformersACECalculator
 from flashace import FlashACE, FlashACECalculator
 ```
 
+## Acknowledgements
+
+Transformers-ACE was developed with assistance from OpenAI Codex.
+
 ## License
 
 See [LICENSE](LICENSE).
