@@ -9,8 +9,8 @@ import time
 from ase.io import read
 from ase.data import atomic_numbers, chemical_symbols
 from e3nn import o3
-from flashace.model import FlashACE
-from flashace.plotting import plot_training_results
+from flashace.model import TransformersACE
+from flashace.plotting import plot_metric_history
 from ase.neighborlist import neighbor_list
 from torch.utils.data import DataLoader, Dataset, random_split
 
@@ -269,12 +269,28 @@ def atomic_energy_tensor(energy_table, device):
     return tensor
 
 def main():
-    parser = argparse.ArgumentParser(description="Train Flash-ACE")
+    parser = argparse.ArgumentParser(description="Train Transformers-ACE")
     parser.add_argument("--config", "-c", default=None, help="Path to YAML config file")
     args = parser.parse_args()
 
     config, config_path = _load_config(args.config)
     print(f"--- Loading {config_path} ---")
+
+    torch_num_threads = int(config.get('torch_num_threads', 0) or 0)
+    if torch_num_threads > 0:
+        torch.set_num_threads(torch_num_threads)
+    torch_num_interop_threads = int(config.get('torch_num_interop_threads', 0) or 0)
+    if torch_num_interop_threads > 0:
+        try:
+            torch.set_num_interop_threads(torch_num_interop_threads)
+        except RuntimeError:
+            # PyTorch only permits changing this before inter-op work starts.
+            pass
+    print(
+        f"PyTorch CPU threads: {torch.get_num_threads()} intra-op, "
+        f"{torch.get_num_interop_threads()} inter-op"
+    )
+
     device = config['device']
     device_type = device.split(":")[0]
 
@@ -353,8 +369,8 @@ def main():
     valid_loader = DataLoader(val_ds, batch_size=config['batch_size'], 
                               collate_fn=AtomisticDataset.collate_fn, num_workers=num_workers)
 
-    print("--- Initializing FlashACE ---")
-    model = FlashACE(
+    print("--- Initializing Transformers-ACE ---")
+    model = TransformersACE(
         r_max=config['r_max'], l_max=config['l_max'], num_radial=config['num_radial'],
         hidden_dim=config['hidden_dim'], num_layers=config['num_layers'],
         radial_basis_type=config.get('radial_basis_type', 'bessel'),
@@ -491,7 +507,17 @@ def main():
         else:
             return torch.tensor(0.0, device=device)
 
-    history = {'train_loss':[], 'val_loss':[]}
+    history = {
+        'epoch': [],
+        'train_loss': [],
+        'val_loss': [],
+        'train_energy_rmse': [],
+        'val_energy_rmse': [],
+        'train_force_rmse': [],
+        'val_force_rmse': [],
+        'train_stress_rmse': [],
+        'val_stress_rmse': [],
+    }
 
     ckpt_interval = int(config.get('checkpoint_interval', 0) or 0)
 
@@ -672,8 +698,6 @@ def main():
 
         avg_train_loss = total_loss / max(1, total_items_seen)
         tr_e, tr_f, tr_s, tr_f_mse, tr_f_mae = train_metrics.get_metrics()
-        history['train_loss'].append(avg_train_loss)
-
         # Validation
         model.eval()
         val_metrics = MetricTracker()
@@ -716,7 +740,16 @@ def main():
 
         avg_val_loss = val_loss_accum / len(val_atoms)
         val_e, val_f, val_s, val_f_mse, val_f_mae = val_metrics.get_metrics()
+        avg_val_loss = float(avg_val_loss.detach().cpu())
+        history['epoch'].append(epoch + 1)
+        history['train_loss'].append(float(avg_train_loss))
         history['val_loss'].append(avg_val_loss)
+        history['train_energy_rmse'].append(float(tr_e))
+        history['val_energy_rmse'].append(float(val_e))
+        history['train_force_rmse'].append(float(tr_f))
+        history['val_force_rmse'].append(float(val_f))
+        history['train_stress_rmse'].append(float(tr_s))
+        history['val_stress_rmse'].append(float(val_s))
         if scheduler_interval == 'epoch':
             scheduler.step()
 
@@ -753,5 +786,11 @@ def main():
         atomic_energy_map,
     )
     print(f"Training Finished. Saved to {config['model_save_path']}")
+
+    if config.get('plot_training_curves', True):
+        try:
+            plot_metric_history(history, save_dir=config.get('plot_dir', 'plots'))
+        except Exception as error:
+            print(f"[PLOTTING] Could not create training curves: {error}")
 
 if __name__ == "__main__": main()

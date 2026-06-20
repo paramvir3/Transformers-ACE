@@ -172,7 +172,7 @@ class LocalEquivariantAttentionBlock(nn.Module):
             scalar_update = scalar_update * self.layer_scale_ffn
         return torch.cat((scalars + scalar_update, rest), dim=-1)
 
-class FlashACE(nn.Module):
+class TransformersACE(nn.Module):
     def __init__(
         self,
         r_max=5.0,
@@ -379,14 +379,23 @@ class FlashACE(nn.Module):
                 stress[0, 0] = g_eps[0]
                 stress[1, 1] = g_eps[1]
                 stress[2, 2] = g_eps[2]
-                stress[0, 1] = stress[1, 0] = g_eps[3]
-                stress[0, 2] = stress[2, 0] = g_eps[4]
-                stress[1, 2] = stress[2, 1] = g_eps[5]
+                # Each shear parameter changes two symmetric strain entries, so
+                # its derivative is twice the corresponding tensor component.
+                stress[0, 1] = stress[1, 0] = 0.5 * g_eps[3]
+                stress[0, 2] = stress[2, 0] = 0.5 * g_eps[4]
+                stress[1, 2] = stress[2, 1] = 0.5 * g_eps[5]
 
                 if cell is not None:
                     volume = torch.det(cell).abs().clamp_min(1e-12)
                 else:
                     volume = cell_volume * torch.det(deformation)
-                S = -stress / volume
+                # ASE uses sigma_ab = (1 / V) dE / d(epsilon_ab). Its cell
+                # filters apply the minus sign when constructing cell forces.
+                S = stress / volume
 
         return E, F, S, aux
+
+
+# Backward compatibility for checkpoints and scripts created under the original
+# Flash-ACE project name.
+FlashACE = TransformersACE

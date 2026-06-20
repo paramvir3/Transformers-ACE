@@ -1,6 +1,62 @@
+import csv
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import os
+
+
+def plot_metric_history(history, save_dir="plots"):
+    """Save train/validation convergence curves and their numerical history."""
+    os.makedirs(save_dir, exist_ok=True)
+
+    epochs = np.asarray(history["epoch"], dtype=int)
+    panels = [
+        ("loss", "Weighted total loss"),
+        ("energy_rmse", "Energy RMSE (meV/atom)"),
+        ("force_rmse", r"Force RMSE (eV/$\AA$)"),
+        ("stress_rmse", r"Stress RMSE (eV/$\AA^3$)"),
+    ]
+
+    fig, axes = plt.subplots(2, 2, figsize=(12, 9), constrained_layout=True)
+    for axis, (metric, ylabel) in zip(axes.flat, panels):
+        plotted = False
+        for split, style in (("train", "-"), ("val", "--")):
+            values = np.asarray(history[f"{split}_{metric}"], dtype=float)
+            positive = values > 0.0
+            if np.any(positive):
+                axis.plot(
+                    epochs[positive],
+                    values[positive],
+                    style,
+                    linewidth=2,
+                    label="Training" if split == "train" else "Validation",
+                )
+                plotted = True
+        axis.set_xlabel("Epoch")
+        axis.set_ylabel(ylabel)
+        axis.set_title(ylabel)
+        if plotted:
+            axis.set_yscale("log")
+            axis.legend()
+        else:
+            axis.text(0.5, 0.5, "No labeled data", ha="center", va="center", transform=axis.transAxes)
+        axis.grid(True, which="both", linestyle=":", alpha=0.45)
+
+    figure_path = os.path.join(save_dir, "training_curves.png")
+    fig.savefig(figure_path, dpi=250, bbox_inches="tight")
+    plt.close(fig)
+
+    history_path = os.path.join(save_dir, "training_history.csv")
+    fieldnames = list(history.keys())
+    with open(history_path, "w", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(fieldnames)
+        writer.writerows(zip(*(history[name] for name in fieldnames)))
+
+    print(f"[PLOTTING] Training curves saved to: {figure_path}")
+    print(f"[PLOTTING] Metric history saved to: {history_path}")
+    return figure_path, history_path
 
 def plot_training_results(history, train_preds, val_preds, save_dir="plots"):
     """

@@ -1,0 +1,81 @@
+# Example CsPbI3 configuration. Update the dataset and output paths.
+train_file: "training/train.extxyz"
+valid_file: null
+val_split: 0.1
+model_save_path: "model.pt"
+
+r_max: 6.0
+l_max: 2
+num_radial: 12
+hidden_dim: 64
+num_layers: 2
+descriptor_passes: 1
+descriptor_residual: true
+interleave_descriptor: false
+attention_num_heads: 2
+attention_key_dim: null
+attention_ffn_hidden: null
+attention_dropout: 0.0
+attention_layer_scale_init: 0.01
+attention_distance_penalty: true
+radial_basis_type: "bessel"
+radial_trainable: false
+envelope_exponent: 5
+gaussian_width: 0.5
+radial_mlp_hidden: 64
+radial_mlp_layers: 2
+
+epochs: 200
+batch_size: 8
+learning_rate: 0.001
+weight_decay: 0.0
+lr_scheduler_t_max: 200
+lr_warmup_epochs: 0
+lr_warmup_start_factor: 0.1
+lr_scheduler_interval: "epoch"
+lr_scheduler_use_restarts: false
+lr_restart_mult: 1.0
+lr_min: 0.00001
+clip_grad_norm: 1.0
+use_amp: false
+amp_dtype: "bfloat16"
+grad_accum_steps: 1
+precompute_neighbors: true
+random_rotation: false
+device: "cpu"
+torch_num_threads: 0
+torch_num_interop_threads: 1
+num_workers: 0
+
+checkpoint_dir: "checkpoints"
+checkpoint_interval: 0
+resume_from: null
+resume_load_optimizer: false
+resume_load_scheduler: false
+resume_load_scaler: false
+use_checkpoint_energy_shift: true
+energy_shift_per_atom: null
+atomic_energies: null
+solve_atomic_energies: false
+
+energy_weight: 100.0
+forces_weight: 10.0
+forces_weight_final: 10.0
+forces_weight_decay_epochs: 0
+stress_weight: 1000.0
+aux_force_weight: 0.0
+aux_stress_weight: 0.0
+force_consistency_weight: 0.0
+sobolev_weight: 0.001
+sobolev_sigma: 0.02
+displacement_prob: 0.1
+displacement_sigma: 0.02
+
+temperature_scale_start: 1.3
+temperature_scale_end: 1.0
+temperature_scale_epochs: 15
+temperature_force_ref: 0.5
+temperature_force_exponent: -0.25
+
+plot_training_curves: true
+plot_dir: "plots"

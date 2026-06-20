@@ -2,11 +2,11 @@ import torch
 import numpy as np
 from ase.calculators.calculator import Calculator, all_changes
 from ase.neighborlist import neighbor_list
-from .model import FlashACE
+from .model import TransformersACE
 
-class FlashACECalculator(Calculator):
+class TransformersACECalculator(Calculator):
     """
-    ASE Calculator for FlashACE.
+    ASE calculator for Transformers-ACE.
     Uses standard ASE neighbor lists (highly compatible).
     """
     implemented_properties = ['energy', 'forces', 'stress']
@@ -20,7 +20,7 @@ class FlashACECalculator(Calculator):
         else:
             self.device = device
             
-        print(f"Loading FlashACE from {model_path} on {self.device}...")
+        print(f"Loading Transformers-ACE from {model_path} on {self.device}...")
 
         # 2. Load Model & Config
         try:
@@ -47,7 +47,7 @@ class FlashACECalculator(Calculator):
         self.r_max = float(conf['r_max'])
 
         # 3. Initialize Architecture
-        self.model = FlashACE(
+        self.model = TransformersACE(
             r_max=self.r_max,
             l_max=conf['l_max'],
             num_radial=conf['num_radial'],
@@ -137,3 +137,7 @@ class FlashACECalculator(Calculator):
                 S_mat[0,0], S_mat[1,1], S_mat[2,2],
                 S_mat[1,2], S_mat[0,2], S_mat[0,1]
             ])
+
+
+# Preserve the original calculator import for existing user scripts.
+FlashACECalculator = TransformersACECalculator
