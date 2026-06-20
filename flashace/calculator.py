@@ -2,11 +2,11 @@ import torch
 import numpy as np
 from ase.calculators.calculator import Calculator, all_changes
 from ase.neighborlist import neighbor_list
-from .model import FlashACE
+from .model import TransformersACE
 
-class FlashACECalculator(Calculator):
+class TransformersACECalculator(Calculator):
     """
-    ASE Calculator for FlashACE.
+    ASE calculator for Transformers-ACE.
     Uses standard ASE neighbor lists (highly compatible).
     """
     implemented_properties = ['energy', 'forces', 'stress']
@@ -20,7 +20,7 @@ class FlashACECalculator(Calculator):
         else:
             self.device = device
             
-        print(f"Loading FlashACE from {model_path} on {self.device}...")
+        print(f"Loading Transformers-ACE from {model_path} on {self.device}...")
 
         # 2. Load Model & Config
         try:
@@ -47,7 +47,7 @@ class FlashACECalculator(Calculator):
         self.r_max = float(conf['r_max'])
 
         # 3. Initialize Architecture
-        self.model = FlashACE(
+        self.model = TransformersACE(
             r_max=self.r_max,
             l_max=conf['l_max'],
             num_radial=conf['num_radial'],
@@ -57,11 +57,18 @@ class FlashACECalculator(Calculator):
             radial_trainable=conf.get('radial_trainable', False),
             envelope_exponent=conf.get('envelope_exponent', 5),
             gaussian_width=conf.get('gaussian_width', 0.5),
-            transformer_num_heads=conf.get('transformer_num_heads', 4),
-            transformer_ffn_hidden=conf.get('transformer_ffn_hidden', None),
-            transformer_dropout=conf.get('transformer_dropout', 0.0),
-            use_aux_force_head=conf.get('use_aux_force_head', False),
-            use_aux_stress_head=conf.get('use_aux_stress_head', False),
+            descriptor_passes=conf.get('descriptor_passes', 1),
+            descriptor_residual=conf.get('descriptor_residual', True),
+            radial_mlp_hidden=conf.get('radial_mlp_hidden', 64),
+            radial_mlp_layers=conf.get('radial_mlp_layers', 2),
+            attention_num_heads=conf.get('attention_num_heads', conf.get('transformer_num_heads', 4)),
+            attention_key_dim=conf.get('attention_key_dim', None),
+            attention_ffn_hidden=conf.get('attention_ffn_hidden', conf.get('transformer_ffn_hidden', None)),
+            attention_dropout=conf.get('attention_dropout', conf.get('transformer_dropout', 0.0)),
+            attention_layer_scale_init=conf.get('attention_layer_scale_init', 1e-2),
+            attention_distance_penalty=conf.get('attention_distance_penalty', True),
+            use_aux_force_head=False,
+            use_aux_stress_head=False,
         )
         
         # 4. Load Weights
@@ -73,13 +80,18 @@ class FlashACECalculator(Calculator):
         # Standard ASE setup
         Calculator.calculate(self, atoms, properties, system_changes)
         
-        # 1. Neighbor List (Standard ASE)
-        i, j = neighbor_list('ij', atoms, self.r_max)
-        edge_index = torch.stack([torch.tensor(i), torch.tensor(j)], dim=0).to(self.device)
+        # 1. Periodic-correct neighbor list. ASE shift S gives
+        # r_j - r_i + S @ cell, so edges are stored as neighbor -> center.
+        i, j, shifts = neighbor_list('ijS', atoms, self.r_max)
+        edge_index = torch.stack(
+            [torch.tensor(j, dtype=torch.long), torch.tensor(i, dtype=torch.long)], dim=0
+        ).to(self.device)
+        edge_shift = torch.tensor(shifts, dtype=torch.float32, device=self.device)
         
         # 2. Prepare Data
         z = torch.tensor(atoms.numbers, dtype=torch.long, device=self.device)
         pos = torch.tensor(atoms.positions, dtype=torch.float32, device=self.device)
+        cell = torch.tensor(atoms.cell.array, dtype=torch.float32, device=self.device)
         
         # Volume handling (Use 1.0 for non-periodic systems)
         if atoms.pbc.any():
@@ -88,18 +100,22 @@ class FlashACECalculator(Calculator):
             vol = 1.0
 
         data = {
-            'z': z, 'pos': pos, 'edge_index': edge_index,
-            'volume': torch.tensor(vol, dtype=torch.float32, device=self.device)
+            'z': z,
+            'pos': pos,
+            'cell': cell,
+            'edge_index': edge_index,
+            'edge_shift': edge_shift,
+            'volume': torch.tensor(vol, dtype=torch.float32, device=self.device),
         }
         
         # 3. Run Model
         calc_stress = 'stress' in properties
 
-        # If calculating stress, enable gradients w.r.t cell (training=True)
-        if calc_stress:
-            pred_E, pred_F, pred_S, _ = self.model(data, training=True)
-        else:
-            pred_E, pred_F, _, _ = self.model(data, training=False)
+        pred_E, pred_F, pred_S, _ = self.model(
+            data,
+            training=False,
+            compute_stress=calc_stress,
+        )
 
         if self.atomic_energy_tensor is not None:
             if torch.max(z).item() >= self.atomic_energy_tensor.shape[0]:
@@ -121,3 +137,7 @@ class FlashACECalculator(Calculator):
                 S_mat[0,0], S_mat[1,1], S_mat[2,2],
                 S_mat[1,2], S_mat[0,2], S_mat[0,1]
             ])
+
+
+# Preserve the original calculator import for existing user scripts.
+FlashACECalculator = TransformersACECalculator

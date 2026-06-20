@@ -1,141 +1,178 @@
+import math
+
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from e3nn import o3
-from .physics import ACE_Descriptor
+from .physics import ACE_Descriptor, ACERadialBasis
 
-class ScalarMessagePassing(nn.Module):
-    """Lightweight, scalar-only message passing to mimic NequIP-style updates."""
+
+def _segment_softmax(logits: torch.Tensor, index: torch.Tensor, num_nodes: int) -> torch.Tensor:
+    """Softmax over incoming local edges for each receiver atom."""
+    if logits.numel() == 0:
+        return logits
+
+    logits_f = logits.float()
+    expanded_index = index[:, None].expand(-1, logits.shape[-1])
+    max_per_node = torch.full(
+        (num_nodes, logits.shape[-1]),
+        float("-inf"),
+        device=logits.device,
+        dtype=logits_f.dtype,
+    )
+    max_per_node = max_per_node.scatter_reduce(
+        0,
+        expanded_index,
+        logits_f,
+        reduce="amax",
+        include_self=True,
+    )
+    max_per_node = torch.where(
+        torch.isfinite(max_per_node), max_per_node, torch.zeros_like(max_per_node)
+    )
+    centered = logits_f - max_per_node[index]
+    exp_logits = torch.exp(centered)
+    denom = torch.zeros_like(max_per_node).scatter_add(0, expanded_index, exp_logits)
+    return (exp_logits / (denom[index] + 1e-9)).to(logits.dtype)
+
+
+class ScalarPreNorm(nn.Module):
+    """Normalize invariant scalar channels without mixing equivariant components."""
+
     def __init__(self, hidden_dim: int):
         super().__init__()
         self.hidden_dim = hidden_dim
-        self.mlp = nn.Sequential(
-            nn.Linear(hidden_dim * 2 + 1, hidden_dim),
-            nn.SiLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-        )
-
-    def forward(self, h: torch.Tensor, edge_index: torch.Tensor, edge_len: torch.Tensor) -> torch.Tensor:
-        scalars, rest = h[..., : self.hidden_dim], h[..., self.hidden_dim :]
-        sender, receiver = edge_index
-        if sender.numel() == 0:
-            return h
-
-        msg_in = torch.cat([scalars[sender], scalars[receiver], edge_len.unsqueeze(-1)], dim=-1)
-        msgs = self.mlp(msg_in)
-        if msgs.dtype != scalars.dtype:
-            msgs = msgs.to(scalars.dtype)
-        agg = torch.zeros_like(scalars)
-        agg.index_add_(0, receiver, msgs)
-        scalars = scalars + agg
-        return torch.cat([scalars, rest], dim=-1)
-
-class EdgeUpdate(nn.Module):
-    """Per-layer scalar edge update that refreshes node scalars from current states."""
-    def __init__(self, hidden_dim: int):
-        super().__init__()
-        self.hidden_dim = hidden_dim
-        self.mlp = nn.Sequential(
-            nn.Linear(hidden_dim * 2 + 1, hidden_dim),
-            nn.SiLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-        )
-
-    def forward(self, h: torch.Tensor, edge_index: torch.Tensor, edge_len: torch.Tensor) -> torch.Tensor:
-        scalars, rest = h[..., : self.hidden_dim], h[..., self.hidden_dim :]
-        sender, receiver = edge_index
-        if sender.numel() == 0:
-            return h
-
-        msg_in = torch.cat([scalars[sender], scalars[receiver], edge_len.unsqueeze(-1)], dim=-1)
-        msgs = self.mlp(msg_in)
-        if msgs.dtype != scalars.dtype:
-            msgs = msgs.to(scalars.dtype)
-        agg = torch.zeros_like(scalars)
-        agg.index_add_(0, receiver, msgs)
-        scalars = scalars + agg
-        return torch.cat([scalars, rest], dim=-1)
-
-class EdgeStateInit(nn.Module):
-    """Initialize per-edge embeddings from current node scalars and distances."""
-    def __init__(self, node_dim: int, edge_state_dim: int):
-        super().__init__()
-        self.mlp = nn.Sequential(
-            nn.Linear(node_dim * 2 + 1, edge_state_dim),
-            nn.SiLU(),
-            nn.Linear(edge_state_dim, edge_state_dim),
-        )
-
-    def forward(self, scalars: torch.Tensor, edge_index: torch.Tensor, edge_len: torch.Tensor) -> torch.Tensor:
-        sender, receiver = edge_index
-        if sender.numel() == 0:
-            return torch.zeros((0, self.mlp[-1].out_features), device=scalars.device, dtype=scalars.dtype)
-        msg_in = torch.cat([scalars[sender], scalars[receiver], edge_len.unsqueeze(-1)], dim=-1)
-        return self.mlp(msg_in)
-
-class EdgeStateUpdate(nn.Module):
-    """Update edge embeddings from current node scalars and previous edge state."""
-    def __init__(self, node_dim: int, edge_state_dim: int):
-        super().__init__()
-        self.mlp = nn.Sequential(
-            nn.Linear(node_dim * 2 + edge_state_dim + 1, edge_state_dim),
-            nn.SiLU(),
-            nn.Linear(edge_state_dim, edge_state_dim),
-        )
-
-    def forward(self, scalars: torch.Tensor, edge_index: torch.Tensor, edge_len: torch.Tensor, edge_state: torch.Tensor) -> torch.Tensor:
-        sender, receiver = edge_index
-        if sender.numel() == 0:
-            return edge_state
-        msg_in = torch.cat([scalars[sender], scalars[receiver], edge_state, edge_len.unsqueeze(-1)], dim=-1)
-        return self.mlp(msg_in)
-
-class NodeUpdateMLP(nn.Module):
-    """Irrep-aware node update on scalars only (post-aggregation)."""
-    def __init__(self, hidden_dim: int):
-        super().__init__()
-        self.mlp = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.SiLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-        )
-
-    def forward(self, h: torch.Tensor) -> torch.Tensor:
-        scalars, rest = h[..., : self.mlp[0].in_features], h[..., self.mlp[0].in_features :]
-        scalars = scalars + self.mlp(scalars)
-        return torch.cat([scalars, rest], dim=-1)
-
-class TransformerBlock(nn.Module):
-    """Full transformer block with pre-norm attention and FFN on all channels."""
-    def __init__(self, feature_dim: int, num_heads: int, ffn_hidden: int, dropout: float = 0.0):
-        super().__init__()
-        self.norm1 = nn.LayerNorm(feature_dim)
-        self.attn = nn.MultiheadAttention(
-            feature_dim, num_heads, dropout=dropout, batch_first=True
-        )
-        self.norm2 = nn.LayerNorm(feature_dim)
-        self.ffn = nn.Sequential(
-            nn.Linear(feature_dim, ffn_hidden),
-            nn.SiLU(),
-            nn.Dropout(dropout),
-            nn.Linear(ffn_hidden, feature_dim),
-            nn.Dropout(dropout),
-        )
+        self.norm = nn.LayerNorm(hidden_dim)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Treat nodes as the sequence dimension; single batch.
-        residual = x
-        x_norm = self.norm1(x)
-        attn_out, _ = self.attn(
-            x_norm.unsqueeze(0),
-            x_norm.unsqueeze(0),
-            x_norm.unsqueeze(0),
-            need_weights=False,
-        )
-        x = residual + attn_out.squeeze(0)
-        x_norm = self.norm2(x)
-        return x + self.ffn(x_norm)
+        scalars = self.norm(x[..., : self.hidden_dim])
+        rest = x[..., self.hidden_dim :]
+        return torch.cat((scalars, rest), dim=-1)
 
-class FlashACE(nn.Module):
+
+class LocalEquivariantAttentionBlock(nn.Module):
+    """Local attention on ACE irreps with invariant weights and equivariant values.
+
+    This is intentionally not a message-passing stack: the only communication is
+    a single local transformer-style attention operation over cutoff neighbors.
+    The attention logits are scalar invariants, while values are transformed with
+    e3nn linear maps, so the residual update preserves E(3) equivariance.
+    """
+
+    def __init__(
+        self,
+        irreps,
+        hidden_dim: int,
+        r_max: float,
+        num_radial: int,
+        num_heads: int = 4,
+        key_dim: int | None = None,
+        ffn_hidden: int | None = None,
+        dropout: float = 0.0,
+        layer_scale_init: float | None = 1e-2,
+        radial_basis_type: str = "bessel",
+        radial_trainable: bool = False,
+        envelope_exponent: int = 5,
+        gaussian_width: float = 0.5,
+        use_distance_penalty: bool = True,
+    ):
+        super().__init__()
+        self.irreps = o3.Irreps(irreps)
+        self.hidden_dim = hidden_dim
+        self.num_heads = max(1, int(num_heads))
+        self.key_dim = key_dim or max(16, hidden_dim // self.num_heads)
+        self.use_distance_penalty = bool(use_distance_penalty)
+
+        self.norm1 = ScalarPreNorm(hidden_dim)
+        self.q_proj = nn.Linear(hidden_dim, self.num_heads * self.key_dim, bias=False)
+        self.k_proj = nn.Linear(hidden_dim, self.num_heads * self.key_dim, bias=False)
+        self.radial_basis = ACERadialBasis(
+            r_max,
+            num_radial,
+            envelope_exponent=envelope_exponent,
+            basis_type=radial_basis_type,
+            trainable=radial_trainable,
+            gaussian_width=gaussian_width,
+        )
+        self.radial_bias = nn.Sequential(
+            nn.Linear(num_radial, max(16, self.num_heads * 4)),
+            nn.SiLU(),
+            nn.Linear(max(16, self.num_heads * 4), self.num_heads),
+        )
+        self.distance_log_scale = (
+            nn.Parameter(torch.zeros(self.num_heads))
+            if self.use_distance_penalty
+            else None
+        )
+
+        self.value_proj = nn.ModuleList(
+            [o3.Linear(self.irreps, self.irreps) for _ in range(self.num_heads)]
+        )
+        self.out_proj = o3.Linear(self.irreps, self.irreps)
+        self.dropout = nn.Dropout(dropout)
+        self.layer_scale_attn = (
+            nn.Parameter(torch.full((self.irreps.dim,), float(layer_scale_init)))
+            if layer_scale_init is not None
+            else None
+        )
+
+        ffn_hidden = ffn_hidden or hidden_dim * 4
+        self.norm2 = nn.LayerNorm(hidden_dim)
+        self.scalar_ffn = nn.Sequential(
+            nn.Linear(hidden_dim, ffn_hidden),
+            nn.SiLU(),
+            nn.Dropout(dropout),
+            nn.Linear(ffn_hidden, hidden_dim),
+            nn.Dropout(dropout),
+        )
+        self.layer_scale_ffn = (
+            nn.Parameter(torch.full((hidden_dim,), float(layer_scale_init)))
+            if layer_scale_init is not None
+            else None
+        )
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        edge_index: torch.Tensor,
+        edge_len: torch.Tensor,
+        temperature_scale: float = 1.0,
+    ) -> torch.Tensor:
+        sender, receiver = edge_index
+        if sender.numel() == 0:
+            return x
+
+        x_norm = self.norm1(x)
+        scalars = x_norm[..., : self.hidden_dim]
+        q = self.q_proj(scalars).view(-1, self.num_heads, self.key_dim)
+        k = self.k_proj(scalars).view(-1, self.num_heads, self.key_dim)
+
+        radial = self.radial_basis(edge_len)
+        logits = (q[receiver] * k[sender]).sum(dim=-1) / math.sqrt(self.key_dim)
+        logits = logits + self.radial_bias(radial)
+        if self.distance_log_scale is not None:
+            logits = logits - F.softplus(self.distance_log_scale)[None, :] * edge_len[:, None]
+        logits = logits / max(float(temperature_scale), 1e-4)
+
+        alpha = self.dropout(_segment_softmax(logits, receiver, x.shape[0]))
+        out = torch.zeros_like(x)
+        for head, value_layer in enumerate(self.value_proj):
+            values = value_layer(x_norm)[sender]
+            out.index_add_(0, receiver, alpha[:, head : head + 1].to(values.dtype) * values)
+        out = out / self.num_heads
+        out = self.out_proj(out)
+        if self.layer_scale_attn is not None:
+            out = out * self.layer_scale_attn
+        x = x + out
+
+        scalars = x[..., : self.hidden_dim]
+        rest = x[..., self.hidden_dim :]
+        scalar_update = self.scalar_ffn(self.norm2(scalars))
+        if self.layer_scale_ffn is not None:
+            scalar_update = scalar_update * self.layer_scale_ffn
+        return torch.cat((scalars + scalar_update, rest), dim=-1)
+
+class TransformersACE(nn.Module):
     def __init__(
         self,
         r_max=5.0,
@@ -151,15 +188,18 @@ class FlashACE(nn.Module):
         descriptor_residual: bool = True,
         radial_mlp_hidden: int = 64,
         radial_mlp_layers: int = 2,
+        attention_num_heads: int | None = None,
+        attention_key_dim: int | None = None,
+        attention_ffn_hidden: int | None = None,
+        attention_dropout: float = 0.0,
+        attention_layer_scale_init: float | None = 1e-2,
+        attention_distance_penalty: bool = True,
         transformer_num_heads: int = 4,
         transformer_ffn_hidden: int | None = None,
         transformer_dropout: float = 0.0,
         use_aux_force_head: bool = True,
         use_aux_stress_head: bool = True,
-        message_passing_layers: int = 0,
         interleave_descriptor: bool = False,
-        edge_update_per_layer: bool = False,
-        node_update_mlp: bool = False,
     ):
         super().__init__()
         self.hidden_dim = hidden_dim
@@ -167,15 +207,17 @@ class FlashACE(nn.Module):
         self.l_max = l_max
         self.descriptor_passes = max(1, int(descriptor_passes))
         self.descriptor_residual = bool(descriptor_residual)
-        self.transformer_num_heads = max(1, int(transformer_num_heads))
-        self.transformer_ffn_hidden = transformer_ffn_hidden
-        self.transformer_dropout = float(transformer_dropout)
-        self.use_aux_force_head = use_aux_force_head
-        self.use_aux_stress_head = use_aux_stress_head
-        self.message_passing_layers = max(0, int(message_passing_layers))
+        self.attention_num_heads = max(1, int(attention_num_heads or transformer_num_heads))
+        self.attention_key_dim = attention_key_dim
+        self.attention_ffn_hidden = attention_ffn_hidden or transformer_ffn_hidden
+        self.attention_dropout = float(attention_dropout if attention_dropout is not None else transformer_dropout)
+        self.attention_layer_scale_init = attention_layer_scale_init
+        self.attention_distance_penalty = bool(attention_distance_penalty)
+        # Direct force/stress heads are intentionally disabled: MD forces and
+        # stresses must come from derivatives of a single scalar energy.
+        self.use_aux_force_head = False
+        self.use_aux_stress_head = False
         self.interleave_descriptor = bool(interleave_descriptor)
-        self.edge_update_per_layer = bool(edge_update_per_layer)
-        self.node_update_mlp = bool(node_update_mlp)
         self.node_scalar_irreps = o3.Irreps(f"{hidden_dim}x0e")
 
         self.emb = nn.Embedding(118, hidden_dim)
@@ -193,22 +235,22 @@ class FlashACE(nn.Module):
         )
         self.attention_irreps = self.ace.irreps_out
 
-        self.mp_layers = nn.ModuleList(
-            [ScalarMessagePassing(hidden_dim) for _ in range(self.message_passing_layers)]
-        )
-        self.edge_updates = nn.ModuleList(
-            [EdgeUpdate(hidden_dim) for _ in range(num_layers)] if self.edge_update_per_layer else []
-        )
-        self.node_updates = nn.ModuleList(
-            [NodeUpdateMLP(hidden_dim) for _ in range(num_layers)] if self.node_update_mlp else []
-        )
-        ffn_hidden = self.transformer_ffn_hidden or self.attention_irreps.dim * 4
         self.layers = nn.ModuleList([
-            TransformerBlock(
-                self.attention_irreps.dim,
-                self.transformer_num_heads,
-                ffn_hidden,
-                dropout=self.transformer_dropout,
+            LocalEquivariantAttentionBlock(
+                self.attention_irreps,
+                hidden_dim,
+                r_max,
+                num_radial,
+                num_heads=self.attention_num_heads,
+                key_dim=self.attention_key_dim,
+                ffn_hidden=self.attention_ffn_hidden,
+                dropout=self.attention_dropout,
+                layer_scale_init=self.attention_layer_scale_init,
+                radial_basis_type=radial_basis_type,
+                radial_trainable=radial_trainable,
+                envelope_exponent=envelope_exponent,
+                gaussian_width=gaussian_width,
+                use_distance_penalty=self.attention_distance_penalty,
             )
             for i in range(num_layers)
         ])
@@ -220,22 +262,22 @@ class FlashACE(nn.Module):
         )
         self.aux_force_head = None
         self.aux_stress_head = None
-        if self.use_aux_force_head:
-            self.aux_force_head = nn.Sequential(
-                nn.Linear(hidden_dim, hidden_dim),
-                nn.SiLU(),
-                nn.Linear(hidden_dim, 3),
-            )
-        if self.use_aux_stress_head:
-            self.aux_stress_head = nn.Sequential(
-                nn.Linear(hidden_dim, hidden_dim),
-                nn.SiLU(),
-                nn.Linear(hidden_dim, 6),
-            )
 
-    def forward(self, data, training=False, temperature_scale: float = 1.0, detach_pos: bool = True):
+    def forward(
+        self,
+        data,
+        training=False,
+        temperature_scale: float = 1.0,
+        detach_pos: bool = True,
+        compute_stress: bool | None = None,
+    ):
         z, pos, edge_index = data['z'], data['pos'], data['edge_index']
         cell_volume = data.get('volume', None)
+        cell = data.get('cell', None)
+        edge_shift = data.get('edge_shift', None)
+
+        if compute_stress is None:
+            compute_stress = training
 
         # We always need gradients w.r.t. atomic positions to compute forces.
         # Detach to ensure we work with a leaf tensor before enabling grads.
@@ -243,11 +285,14 @@ class FlashACE(nn.Module):
             pos = pos.detach()
         pos.requires_grad_(True)
 
-        if training and cell_volume is not None:
+        if cell is not None:
+            cell = cell.to(device=pos.device, dtype=pos.dtype)
+
+        if compute_stress and cell_volume is not None:
             # Parameterize the small-strain tensor symmetrically so the stress
             # we backpropagate through corresponds to the symmetric Cauchy
             # stress and does not pick up spurious rotational components. This
-            # matches how ACE/MACE form stresses by differentiating with
+            # matches ACE-style stress evaluation by differentiating with
             # respect to symmetric lattice strains.
             strain_params = torch.zeros(6, device=pos.device, requires_grad=True)
 
@@ -261,14 +306,19 @@ class FlashACE(nn.Module):
 
             deformation = torch.eye(3, device=pos.device) + epsilon
             pos = pos @ deformation
+            if cell is not None:
+                cell = cell @ deformation
         else:
             strain_params = None
             epsilon = None
 
         edge_vec = pos[edge_index[0]] - pos[edge_index[1]]
+        if edge_shift is not None and cell is not None:
+            edge_shift = edge_shift.to(device=pos.device, dtype=pos.dtype)
+            edge_vec = edge_vec + edge_shift @ cell
         edge_len = torch.norm(edge_vec, dim=1)
 
-        # 1. Descriptor iterations (optionally residual) before message passing / attention.
+        # 1. Descriptor iterations (optionally residual) before local attention.
         h = self.emb(z)
         for i in range(self.descriptor_passes):
             scalars = h[..., : self.hidden_dim]
@@ -278,19 +328,12 @@ class FlashACE(nn.Module):
             else:
                 h = h + desc
 
-        for mp_layer in self.mp_layers:
-            h = mp_layer(h, edge_index, edge_len)
-
         for idx, layer in enumerate(self.layers):
             if self.interleave_descriptor:
                 scalars = h[..., : self.hidden_dim]
                 desc = self.ace(scalars, edge_index, edge_vec, edge_len)
                 h = h + desc if self.descriptor_residual else desc
-            if self.edge_update_per_layer and len(self.edge_updates) > 0:
-                h = self.edge_updates[idx](h, edge_index, edge_len)
-            h = layer(h)
-            if self.node_update_mlp and len(self.node_updates) > 0:
-                h = self.node_updates[idx](h)
+            h = layer(h, edge_index, edge_len, temperature_scale=temperature_scale)
             
         # 2. Readout
         # Note: We extract only the scalar (L=0) features for energy
@@ -310,9 +353,7 @@ class FlashACE(nn.Module):
         # Avoid building second-order graphs during evaluation to reduce memory.
         grad_opts = {
             'create_graph': training,  # only keep graph for higher-order grads when training
-            # Retain the graph during training so we can also differentiate w.r.t. strain
-            # (epsilon) after computing forces.
-            'retain_graph': training and epsilon is not None,
+            'retain_graph': training or epsilon is not None,
             'allow_unused': True,
         }
 
@@ -320,14 +361,14 @@ class FlashACE(nn.Module):
         F = -grads if grads is not None else torch.zeros_like(pos)
         
         S = torch.zeros(3, 3, device=pos.device)
-        if training and epsilon is not None:
+        if compute_stress and epsilon is not None:
             # Retain the graph so the outer loss.backward() can still traverse
             # the computation graph built when taking the strain derivative.
             g_eps = torch.autograd.grad(
                 E,
                 strain_params,
-                create_graph=True,
-                retain_graph=True,
+                create_graph=training,
+                retain_graph=training,
                 allow_unused=True,
             )[0]
             if g_eps is not None:
@@ -338,11 +379,23 @@ class FlashACE(nn.Module):
                 stress[0, 0] = g_eps[0]
                 stress[1, 1] = g_eps[1]
                 stress[2, 2] = g_eps[2]
-                stress[0, 1] = stress[1, 0] = g_eps[3]
-                stress[0, 2] = stress[2, 0] = g_eps[4]
-                stress[1, 2] = stress[2, 1] = g_eps[5]
+                # Each shear parameter changes two symmetric strain entries, so
+                # its derivative is twice the corresponding tensor component.
+                stress[0, 1] = stress[1, 0] = 0.5 * g_eps[3]
+                stress[0, 2] = stress[2, 0] = 0.5 * g_eps[4]
+                stress[1, 2] = stress[2, 1] = 0.5 * g_eps[5]
 
-                volume = cell_volume * torch.det(deformation)
-                S = -stress / volume
+                if cell is not None:
+                    volume = torch.det(cell).abs().clamp_min(1e-12)
+                else:
+                    volume = cell_volume * torch.det(deformation)
+                # ASE uses sigma_ab = (1 / V) dE / d(epsilon_ab). Its cell
+                # filters apply the minus sign when constructing cell forces.
+                S = stress / volume
 
         return E, F, S, aux
+
+
+# Backward compatibility for checkpoints and scripts created under the original
+# Flash-ACE project name.
+FlashACE = TransformersACE
