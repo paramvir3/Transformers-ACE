@@ -77,11 +77,11 @@ stress = atoms.get_stress()
 ## CsPbI3 Test
 
 Five periodic CsPbI3 polymorph structures and scripts for phase energies and
-geometry optimization are included under `phase_tests/cspbi3`. See
+geometry optimization are included under `tests/cspbi3`. See
 [docs/CSPBI3_TEST.md](docs/CSPBI3_TEST.md) for the complete workflow.
 
 ```bash
-python phase_tests/cspbi3/evaluate_phases.py \
+python tests/cspbi3/evaluate_phases.py \
   --model /absolute/path/to/model.pt \
   --device cpu \
   --reference minimum
