@@ -19,7 +19,7 @@ Run all commands from the repository root with the Python environment activated.
 
 ```bash
 python tests/cspbi3/evaluate_phases.py \
-  --model /absolute/path/to/model.pt \
+  --model training/model.pt \
   --device cpu
 ```
 
@@ -28,7 +28,7 @@ Use the checkpoint's predicted minimum as zero instead:
 
 ```bash
 python tests/cspbi3/evaluate_phases.py \
-  --model /absolute/path/to/model.pt \
+  --model training/model.pt \
   --device cpu \
   --reference minimum
 ```
@@ -56,7 +56,7 @@ Relax positions while keeping the supplied cells fixed:
 
 ```bash
 python tests/cspbi3/evaluate_phases.py \
-  --model /absolute/path/to/model.pt \
+  --model training/model.pt \
   --device cpu \
   --relax --fmax 0.05 --steps 500
 ```
@@ -66,7 +66,7 @@ energy-strain differences:
 
 ```bash
 python tests/cspbi3/evaluate_phases.py \
-  --model /absolute/path/to/model.pt \
+  --model training/model.pt \
   --device cpu \
   --relax-cell --fmax 0.05 --steps 500
 ```
@@ -79,7 +79,7 @@ Relaxed structures and optimization logs are saved under
 ```bash
 python tests/cspbi3/relax_single.py \
   --structure tests/cspbi3/structures/orthorhombic_gamma_phase.vasp \
-  --model /absolute/path/to/model.pt \
+  --model training/model.pt \
   --device cpu \
   --repeat 1 1 1 \
   --fixed-cell \

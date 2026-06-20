@@ -90,6 +90,10 @@ def main():
 
     for phase, filename in PHASE_FILES.items():
         structure_path = args.structures / filename
+        try:
+            structure_label = structure_path.relative_to(REPO_ROOT)
+        except ValueError:
+            structure_label = structure_path
         atoms = read(structure_path, format="vasp")
         atoms.pbc = True
         n_fu = formula_units(atoms)
@@ -106,7 +110,7 @@ def main():
         rows.append(
             {
                 "phase": phase,
-                "structure": str(structure_path),
+                "structure": str(structure_label),
                 "n_atoms": len(atoms),
                 "n_formula_units": n_fu,
                 "total_energy_eV": energy,
@@ -137,7 +141,7 @@ def main():
     rows.sort(key=lambda row: row["energy_eV_per_fu"])
     csv_path = args.output / "phase_energies.csv"
     with csv_path.open("w", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=rows[0].keys())
+        writer = csv.DictWriter(handle, fieldnames=rows[0].keys(), lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
 

@@ -1,0 +1,54 @@
+schema_version: 1
+run_name: cspbi3_cpu_100_epoch
+code:
+  repository: https://github.com/paramvir3/Transformers-ACE
+  implementation_commit: bc906b5652dbf22a9c882e0376251195a8c11e68
+  command: python ../train.py --config config.yaml
+  working_directory: training
+
+dataset:
+  path: training/train.extxyz
+  sha256: 746320f0fc427346c9b368799367fd5794ecdc870565532c4ed120aecd8e399c
+  frames: 979
+  composition: Cs8I24Pb8
+  training_frames: 882
+  validation_frames: 97
+  split_seed: 42
+
+configuration:
+  path: training/config.yaml
+  sha256: c2c0b98c868e84c23c545dbdffdb5fffa1c97bed3e029ee116f7d23400fced6c
+  epochs: 100
+  device: cpu
+  global_rng_seed: not_recorded
+
+checkpoint:
+  path: training/model.pt
+  sha256: 37067031060d90be610ba7c9062c9fcc731172fde8069ce1b8530bbcbc18bfc9
+  epoch: 100
+  energy_shift_eV_per_atom: -31.85975279855302
+
+history:
+  path: training/plots/training_history.csv
+  sha256: c70e1f159fc757188dd9ef0a9c3ba5dbde4a60dd81e53fd9a6460b88840b93fb
+  epochs: 100
+  curve_path: training/plots/training_curves.png
+  curve_sha256: 7d971f57cbdc61d9db032a77f3663e9734a1f66c5c0570f82ead95d0b1d0e411
+
+environment:
+  operating_system: macOS-26.3.1-arm64
+  python: 3.12.13
+  torch: 2.12.0
+  e3nn: 0.4.4
+  ase: 3.28.0
+  numpy: 2.4.6
+  pyyaml: 6.0.3
+  matplotlib: 3.11.0
+
+reproducibility:
+  checkpoint_inference: exact_files_and_hashes_published
+  train_validation_split: deterministic
+  bitwise_retraining: not_guaranteed
+  reason: >-
+    The historical run fixed the random split at seed 42, but the code did not
+    record a global seed for model initialization or DataLoader shuffling.

@@ -10,7 +10,12 @@ Quick single-point evaluation from the repository root:
 
 ```bash
 python tests/cspbi3/evaluate_phases.py \
-  --model /absolute/path/to/model.pt \
+  --model training/model.pt \
   --device cpu \
   --reference minimum
 ```
+
+The committed files under `results/` were generated in one run with this exact
+checkpoint. Per-phase scratch directories and copied checkpoints remain ignored
+because mixing checkpoints between phases does not define a valid relative
+energy comparison.
