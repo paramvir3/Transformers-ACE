@@ -1,7 +1,8 @@
 schema_version: 1
 checkpoint:
   path: training/model.pt
-  sha256: 10787df0466b9e901efec8c2ef061d75e74ca785a81a0f91c84749e280769a57
+  architecture_version: 2
+  sha256: 5fd20ea0e15e8992f98d345445f2f33bfbc803174445843b59b3d9ba7409ddae
 command: >-
   python tests/cspbi3/evaluate_phases.py --model training/model.pt
   --device cpu --reference edge_sharing_delta_phase --relax-cell
@@ -11,13 +12,13 @@ plot_command: >-
   --csv tests/cspbi3/results/phase_energies.csv
   --output-dir tests/cspbi3/results
 outputs:
-  phase_energies.csv: b3f0f7c7250f98e00ae9d6879e796a9948eb6bf3e64a03892efb774856258a93
-  relative_energies.csv: 543d805f3aea28f26ac7c8d17d1cc7b28558fff1d1d28a98122a9065c7ed2fa1
-  rE.png: 3232275ea92ad27328f6bc73684e34468e37c4bb9b5ff0c76907f117f3b423c3
-  rE.pdf: c53000de082ae66272243af12bdb85990ff21329ff90d70bc15b0088a802617c
+  phase_energies.csv: 05203e3b43718783fe010460aa7d0f346a037f22325346bc838bf893fea6f7bf
+  relative_energies.csv: 1f80fde46a6fa39329e400418d93da4f2204a860d690d382f2be3b3fad74c7b2
+  rE.png: 300d38c0799810de8f969bf66ed29acbb8cb97be949c1132df3c698441fe9dc9
+  rE.pdf: 8aed696be5dfc21bfce10c5612659c0f2de23143c78f8ea8cb74af3d4c243b8b
 relative_energy_kJ_per_mol:
   edge_sharing_delta_phase: 0.0
-  orthorhombic_gamma_phase: 11.218539898369537
-  tetragonal_beta_phase: 13.245827226460724
-  face_sharing_delta_phase: 29.29481717818334
-  cubic_alpha_phase: 37.90305901358579
+  orthorhombic_gamma_phase: 12.550925542467231
+  face_sharing_delta_phase: 13.568249829839061
+  tetragonal_beta_phase: 16.174131144814663
+  cubic_alpha_phase: 26.04850740444255
