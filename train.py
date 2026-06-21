@@ -12,7 +12,7 @@ from e3nn import o3
 from flashace.model import TransformersACE
 from flashace.plotting import plot_metric_history
 from ase.neighborlist import neighbor_list
-from torch.utils.data import DataLoader, Dataset, random_split
+from torch.utils.data import DataLoader, Dataset
 
 # --- STABILITY SETTINGS ---
 # Disable TF32 to prevent potential TensorCore precision crashes in e3nn
@@ -49,6 +49,7 @@ def save_checkpoint(path, epoch, model, optimizer, scheduler, scaler, config, en
         'scheduler_state_dict': scheduler.state_dict() if scheduler is not None else None,
         'scaler_state_dict': scaler.state_dict() if scaler is not None else None,
         'config': {
+            'architecture_version': 2,
             'r_max': config['r_max'],
             'l_max': config['l_max'],
             'num_radial': config['num_radial'],
@@ -56,7 +57,6 @@ def save_checkpoint(path, epoch, model, optimizer, scheduler, scaler, config, en
             'num_layers': config['num_layers'],
             'radial_basis_type': config.get('radial_basis_type', 'bessel'),
             'radial_trainable': config.get('radial_trainable', False),
-            'envelope_exponent': config.get('envelope_exponent', 5),
             'gaussian_width': config.get('gaussian_width', 0.5),
             'energy_shift_per_atom': energy_shift_per_atom,
             'atomic_energies': atomic_energies or {},
@@ -64,10 +64,10 @@ def save_checkpoint(path, epoch, model, optimizer, scheduler, scaler, config, en
             'use_amp': config.get('use_amp', False),
             'grad_accum_steps': max(1, int(config.get('grad_accum_steps', 1))),
             'precompute_neighbors': config.get('precompute_neighbors', False),
-            'descriptor_passes': config.get('descriptor_passes', 1),
-            'descriptor_residual': config.get('descriptor_residual', True),
-            'radial_mlp_hidden': config.get('radial_mlp_hidden', 64),
+            'radial_mlp_hidden': config.get('radial_mlp_hidden', 32),
             'radial_mlp_layers': config.get('radial_mlp_layers', 2),
+            'correlation_order': config.get('correlation_order', 4),
+            'correlation_channels': config.get('correlation_channels', 16),
             'attention_num_heads': config.get('attention_num_heads', config.get('transformer_num_heads', 4)),
             'attention_key_dim': config.get('attention_key_dim', None),
             'attention_ffn_hidden': config.get('attention_ffn_hidden', config.get('transformer_ffn_hidden', None)),
@@ -298,6 +298,72 @@ def atomic_energy_tensor(energy_table, device):
         tensor[z] = val
     return tensor
 
+
+def split_trajectory_frames(
+    atoms,
+    val_fraction=0.1,
+    seed=42,
+    mode="blocked",
+    block_size=25,
+    gap=0,
+):
+    """Split ordered trajectory frames without scattering one trajectory block.
+
+    A frame-random split gives unrealistically optimistic validation estimates
+    when adjacent molecular-dynamics frames are strongly correlated. ``blocked``
+    selects whole contiguous blocks and can exclude a small boundary gap from
+    training. An explicit validation file remains preferable when phase or
+    trajectory labels are available.
+    """
+    n_frames = len(atoms)
+    if n_frames < 2:
+        raise ValueError("At least two structures are required for a train/validation split")
+
+    val_target = max(1, min(n_frames - 1, int(round(n_frames * val_fraction))))
+    generator = torch.Generator().manual_seed(int(seed))
+    mode = str(mode).lower()
+
+    if mode == "random":
+        order = torch.randperm(n_frames, generator=generator).tolist()
+        val_indices = sorted(order[:val_target])
+    elif mode == "blocked":
+        block_size = min(max(1, int(block_size)), max(1, n_frames // 2))
+        blocks = [
+            list(range(start, min(start + block_size, n_frames)))
+            for start in range(0, n_frames, block_size)
+        ]
+        order = torch.randperm(len(blocks), generator=generator).tolist()
+        selected = []
+        selected_count = 0
+        for block_index in order:
+            if selected_count >= val_target:
+                break
+            if len(blocks) - len(selected) <= 1:
+                break
+            selected.append(block_index)
+            selected_count += len(blocks[block_index])
+        val_indices = sorted(i for block_index in selected for i in blocks[block_index])
+    else:
+        raise ValueError("split_mode must be 'blocked' or 'random'")
+
+    val_set = set(val_indices)
+    excluded = set()
+    gap = max(0, int(gap))
+    if gap:
+        for index in val_indices:
+            excluded.update(range(max(0, index - gap), min(n_frames, index + gap + 1)))
+        excluded.difference_update(val_set)
+
+    train_indices = [i for i in range(n_frames) if i not in val_set and i not in excluded]
+    if not train_indices or not val_indices:
+        raise ValueError("Split settings left an empty training or validation set")
+
+    return (
+        [atoms[i] for i in train_indices],
+        [atoms[i] for i in val_indices],
+        sorted(excluded),
+    )
+
 def main():
     parser = argparse.ArgumentParser(description="Train Transformers-ACE")
     parser.add_argument("--config", "-c", default=None, help="Path to YAML config file")
@@ -305,6 +371,10 @@ def main():
 
     config, config_path = _load_config(args.config)
     print(f"--- Loading {config_path} ---")
+
+    seed = int(config.get('seed', 42))
+    torch.manual_seed(seed)
+    np.random.seed(seed)
 
     torch_num_threads = int(config.get('torch_num_threads', 0) or 0)
     if torch_num_threads > 0:
@@ -352,13 +422,19 @@ def main():
         val_atoms = read(config['valid_file'], index=":")
         train_atoms = all_atoms
     else:
-        val_len = max(1, int(len(all_atoms) * config.get('val_split', 0.1)))
-        train_len = len(all_atoms) - val_len
-        train_atoms, val_atoms = random_split(
-            all_atoms, [train_len, val_len],
-            generator=torch.Generator().manual_seed(42)
+        split_mode = config.get('split_mode', 'blocked')
+        train_atoms, val_atoms, excluded_frames = split_trajectory_frames(
+            all_atoms,
+            val_fraction=config.get('val_split', 0.1),
+            seed=seed,
+            mode=split_mode,
+            block_size=config.get('split_block_size', 25),
+            gap=config.get('split_gap', 0),
         )
-        print(f"Random Split: {train_len} Training | {val_len} Validation")
+        print(
+            f"{str(split_mode).title()} split: {len(train_atoms)} Training | "
+            f"{len(val_atoms)} Validation | {len(excluded_frames)} Gap-excluded"
+        )
 
     atomic_energy_map = parse_atomic_energy_table(config.get('atomic_energies'))
 
@@ -402,7 +478,8 @@ def main():
     pin_memory = device_type == 'cuda'
     train_loader = DataLoader(train_ds, batch_size=config['batch_size'], 
                               collate_fn=AtomisticDataset.collate_fn, shuffle=True,
-                              num_workers=num_workers, pin_memory=pin_memory)
+                              num_workers=num_workers, pin_memory=pin_memory,
+                              generator=torch.Generator().manual_seed(seed))
     
     valid_loader = DataLoader(val_ds, batch_size=config['batch_size'], 
                               collate_fn=AtomisticDataset.collate_fn, num_workers=num_workers)
@@ -413,7 +490,6 @@ def main():
         hidden_dim=config['hidden_dim'], num_layers=config['num_layers'],
         radial_basis_type=config.get('radial_basis_type', 'bessel'),
         radial_trainable=config.get('radial_trainable', False),
-        envelope_exponent=config.get('envelope_exponent', 5),
         gaussian_width=config.get('gaussian_width', 0.5),
         attention_num_heads=config.get('attention_num_heads', config.get('transformer_num_heads', 4)),
         attention_key_dim=config.get('attention_key_dim', None),
@@ -421,11 +497,10 @@ def main():
         attention_dropout=config.get('attention_dropout', config.get('transformer_dropout', 0.0)),
         attention_layer_scale_init=config.get('attention_layer_scale_init', 1e-2),
         attention_distance_penalty=config.get('attention_distance_penalty', True),
-        descriptor_passes=config.get('descriptor_passes', 1),
-        descriptor_residual=config.get('descriptor_residual', True),
-        radial_mlp_hidden=config.get('radial_mlp_hidden', 64),
+        radial_mlp_hidden=config.get('radial_mlp_hidden', 32),
         radial_mlp_layers=config.get('radial_mlp_layers', 2),
-        interleave_descriptor=config.get('interleave_descriptor', False),
+        correlation_order=config.get('correlation_order', 4),
+        correlation_channels=config.get('correlation_channels', 16),
         use_aux_force_head=False,
         use_aux_stress_head=False,
     ).to(device)
@@ -510,6 +585,13 @@ def main():
     if resume_path:
         print(f"--- Loading checkpoint from {resume_path} ---")
         checkpoint = torch.load(resume_path, map_location=device)
+        checkpoint_version = int(checkpoint.get('config', {}).get('architecture_version', 1))
+        if checkpoint_version != TransformersACE.architecture_version:
+            raise ValueError(
+                f"Cannot resume architecture v{checkpoint_version} weights in the "
+                f"v{TransformersACE.architecture_version} model. Start a new v2 run; "
+                "the calculator can still evaluate the legacy checkpoint."
+            )
         model.load_state_dict(checkpoint['model_state_dict'])
 
         if config.get('resume_load_optimizer', False) and checkpoint.get('optimizer_state_dict'):
@@ -600,6 +682,18 @@ def main():
     aux_stress_weight = float(config.get('aux_stress_weight', 0.0))
     sobolev_weight = float(config.get('sobolev_weight', 0.0))
     sobolev_sigma = float(config.get('sobolev_sigma', 0.0))
+
+    early_stopping_patience = max(0, int(config.get('early_stopping_patience', 0)))
+    early_stopping_min_epoch = max(
+        stress_w_ramp_epochs,
+        int(config.get('early_stopping_min_epoch', stress_w_ramp_epochs)),
+    )
+    early_stopping_min_delta = float(config.get('early_stopping_min_delta', 0.0))
+    best_val_loss = float('inf')
+    best_epoch = 0
+    epochs_without_improvement = 0
+    best_checkpoint_saved = False
+    epochs_completed = start_epoch
     
     print(
         f"{'Epoch':>5} | {'Loss':>10} | {'E (meV)':>10} | {'force_RMSE':>12} | {'force_MSE':>12} | {'force_MAE':>12} | {'S_RMSE':>10} || "
@@ -810,6 +904,28 @@ def main():
             f"{avg_val_loss:10.4f} | {val_e:10.2f} | {val_f:16.6f} | {val_f_mse:16.6f} | {val_s:12.6f}"
         )
 
+        epochs_completed = epoch + 1
+        if epoch + 1 >= early_stopping_min_epoch:
+            if avg_val_loss < best_val_loss - early_stopping_min_delta:
+                best_val_loss = avg_val_loss
+                best_epoch = epoch + 1
+                epochs_without_improvement = 0
+                save_checkpoint(
+                    config['model_save_path'],
+                    epoch + 1,
+                    model,
+                    optimizer,
+                    scheduler,
+                    scaler,
+                    config,
+                    energy_shift_per_atom,
+                    atomic_energy_map,
+                )
+                best_checkpoint_saved = True
+                print(f"New best validation loss at epoch {best_epoch}: {best_val_loss:.6f}")
+            else:
+                epochs_without_improvement += 1
+
         if ckpt_interval > 0 and (epoch + 1) % ckpt_interval == 0:
             ckpt_dir = config.get('checkpoint_dir', 'checkpoints')
             ckpt_path = os.path.join(ckpt_dir, f"epoch_{epoch+1}.pt")
@@ -825,18 +941,49 @@ def main():
                 atomic_energy_map,
             )
 
-    save_checkpoint(
-        config['model_save_path'],
-        config['epochs'],
-        model,
-        optimizer,
-        scheduler,
-        scaler,
-        config,
-        energy_shift_per_atom,
-        atomic_energy_map,
+        if (
+            early_stopping_patience > 0
+            and epoch + 1 >= early_stopping_min_epoch
+            and epochs_without_improvement >= early_stopping_patience
+        ):
+            print(
+                f"Early stopping at epoch {epoch + 1}; best epoch was "
+                f"{best_epoch} with validation loss {best_val_loss:.6f}."
+            )
+            break
+
+    if not best_checkpoint_saved:
+        save_checkpoint(
+            config['model_save_path'],
+            epochs_completed,
+            model,
+            optimizer,
+            scheduler,
+            scaler,
+            config,
+            energy_shift_per_atom,
+            atomic_energy_map,
+        )
+        best_epoch = epochs_completed
+
+    if config.get('save_last_checkpoint', True):
+        root, extension = os.path.splitext(config['model_save_path'])
+        last_path = config.get('last_model_save_path') or f"{root}_last{extension or '.pt'}"
+        save_checkpoint(
+            last_path,
+            epochs_completed,
+            model,
+            optimizer,
+            scheduler,
+            scaler,
+            config,
+            energy_shift_per_atom,
+            atomic_energy_map,
+        )
+    print(
+        f"Training finished. Best checkpoint: {config['model_save_path']} "
+        f"(epoch {best_epoch})."
     )
-    print(f"Training Finished. Saved to {config['model_save_path']}")
 
     if config.get('plot_training_curves', True):
         try:

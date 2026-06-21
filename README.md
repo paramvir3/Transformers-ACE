@@ -8,9 +8,10 @@ derivatives so they remain conservative and suitable for molecular dynamics.
 The model combines:
 
 - periodic-correct local neighbor geometry;
-- ACE radial functions, spherical harmonics, and Clebsch-Gordan contractions;
-- local attention over learned atomic states with invariant attention weights
-  and equivariant values;
+- C2-cutoff radial functions, spherical harmonics, and learned body-order-two
+  through body-order-four Clebsch-Gordan density contractions;
+- strictly local neighbor-set attention with invariant weights and equivariant
+  geometric values; updated hidden states are never sent between atom centers;
 - energy-derived forces and symmetric stress;
 - automatic train/validation plots for energy, force, stress, and total loss.
 
@@ -52,6 +53,17 @@ Training saves the configured `.pt` checkpoint. By default it also writes:
 plots/training_curves.png
 plots/training_history.csv
 ```
+
+`model.pt` is the best validation checkpoint after the stress-weight ramp;
+`model_last.pt` records the final epoch. The supplied CsPbI3 configuration uses
+a deterministic blocked trajectory split so adjacent frames are not scattered
+between training and validation.
+
+The equations, locality definition, body-order convention, and checkpoint
+versioning are described in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+The complete paper-style methods section is provided as
+[LaTeX source](docs/TRANSFORMERS_ACE_METHODS.tex) and a
+[rendered PDF](output/pdf/transformers_ace_methods.pdf).
 
 For very large trajectories, stream every tenth frame without loading the full
 file into memory:

@@ -4,9 +4,14 @@
 # 1. DATASETS
 # ------------------------------------------------------------------------------
 train_file: "./train.extxyz"   # Resolved from the training working directory
-valid_file: null                  # Leave null to use random split
-val_split: 0.1                    # 10% of data used for validation (randomly selected)
+valid_file: null                  # Leave null to use the blocked split below
+val_split: 0.1                    # Fraction of data used for validation
+split_mode: "blocked"             # Keep correlated trajectory frames together
+split_block_size: 25              # Contiguous frames per validation-selection block
+split_gap: 2                      # Exclude nearby boundary frames from training
+seed: 42                          # Model initialization, split, and DataLoader shuffling
 model_save_path: "model.pt"
+save_last_checkpoint: true        # Also write model_last.pt; model.pt remains the best epoch
 plot_training_curves: true       # Save loss/error curves automatically after training
 plot_dir: "plots"                # training_curves.png and training_history.csv
 
@@ -17,21 +22,20 @@ r_max: 6
 l_max: 2
 num_radial: 12
 hidden_dim: 64
-num_layers: 2
-descriptor_passes: 1             # Number of ACE descriptor iterations before attention
-descriptor_residual: true        # Add descriptor outputs residually across passes
-interleave_descriptor: false     # Refresh ACE descriptors between local attention blocks
+num_layers: 1                    # One strictly local neighbor-set attention block
+architecture_version: 2
+correlation_order: 4             # Density, 3-body, and 4-body ACE correlations
+correlation_channels: 16         # Compact independent CG contraction channels
 attention_num_heads: 2           # Local invariant attention heads over cutoff neighbors
 attention_key_dim: null          # Per-head scalar key width (null chooses a conservative default)
 attention_ffn_hidden: null       # Scalar FFN width after equivariant attention
-attention_dropout: 0.0           # Dropout in local attention/FFN
+attention_dropout: 0.03          # Light regularization for the small correlated dataset
 attention_layer_scale_init: 0.01 # Small residual scale for stable deep local attention
 attention_distance_penalty: true # Penalize long local edges in attention logits
 radial_basis_type: "bessel"       # Options: bessel, gaussian
 radial_trainable: false           # Make radial frequencies/centers learnable
-envelope_exponent: 5              # Polynomial cutoff exponent (higher = steeper)
 gaussian_width: 0.5              # Relative Gaussian width multiplier (only used if basis=gaussian)
-radial_mlp_hidden: 64           # Hidden width for the radial mixing MLP
+radial_mlp_hidden: 32           # Factorized compact radial mixing
 radial_mlp_layers: 2            # Layers for the radial mixing MLP
 
 # ------------------------------------------------------------------------------
@@ -40,10 +44,10 @@ radial_mlp_layers: 2            # Layers for the radial mixing MLP
 epochs: 100
 batch_size: 8
 # Higher force focus with stable LR schedule
-learning_rate: 0.002             # Slightly higher to emphasize force updates
+learning_rate: 0.001
 # Optional optimizer and scheduler tweaks
-weight_decay: 0.0
-lr_scheduler_t_max: 300          # Epochs for one cosine cycle (defaults to total epochs)
+weight_decay: 0.00001
+lr_scheduler_t_max: 100          # One cosine decay over the requested training length
 lr_warmup_epochs: 0              # Linear warmup steps before cosine annealing
 lr_warmup_start_factor: 0.1      # Starting LR factor for warmup (fraction of base LR, must be > 0)
 lr_scheduler_interval: "epoch"   # Apply LR schedule per 'epoch' or per 'step' for faster ramping
@@ -62,6 +66,9 @@ torch_num_interop_threads: 1     # Avoid nested parallel work competing for the 
 num_workers: 0                   # Stable on macOS; model math still uses all CPU threads
 checkpoint_dir: "checkpoints"     # Directory to stash periodic checkpoints
 checkpoint_interval: 0           # Save a checkpoint every N epochs (0 disables)
+early_stopping_patience: 20      # Stop after sustained validation non-improvement
+early_stopping_min_epoch: 25     # Begin monitoring after the stress ramp settles
+early_stopping_min_delta: 0.0001
 resume_from: null                # Path to a checkpoint to resume from
 resume_load_optimizer: false     # Load optimizer state when resuming
 resume_load_scheduler: false     # Load LR scheduler state when resuming

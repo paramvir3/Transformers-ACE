@@ -1,8 +1,29 @@
+import sys
+
 import torch
 import numpy as np
 from ase.calculators.calculator import Calculator, all_changes
 from ase.neighborlist import neighbor_list
-from .model import TransformersACE
+from .model import LegacyTransformersACE, TransformersACE
+
+
+def _load_checkpoint(path, map_location):
+    """Load checkpoints saved by either NumPy 1.x or NumPy 2.x.
+
+    NumPy 2 moved its private implementation package from ``numpy.core`` to
+    ``numpy._core``. PyTorch pickles can retain that module path even though the
+    stored arrays themselves are compatible with NumPy 1.x.
+    """
+    try:
+        return torch.load(path, map_location=map_location)
+    except ModuleNotFoundError as error:
+        if error.name != "numpy._core" or hasattr(np, "_core"):
+            raise
+
+        sys.modules.setdefault("numpy._core", np.core)
+        sys.modules.setdefault("numpy._core.multiarray", np.core.multiarray)
+        sys.modules.setdefault("numpy._core.numeric", np.core.numeric)
+        return torch.load(path, map_location=map_location)
 
 class TransformersACECalculator(Calculator):
     """
@@ -24,7 +45,7 @@ class TransformersACECalculator(Calculator):
 
         # 2. Load Model & Config
         try:
-            checkpoint = torch.load(model_path, map_location=self.device)
+            checkpoint = _load_checkpoint(model_path, map_location=self.device)
         except FileNotFoundError:
             raise FileNotFoundError(f"Model file not found: {model_path}")
 
@@ -46,8 +67,20 @@ class TransformersACECalculator(Calculator):
         # Ensure cutoff is float
         self.r_max = float(conf['r_max'])
 
+        # Checkpoints created before architecture versioning are v1. This keeps
+        # every published model numerically tied to the implementation that was
+        # used to train it while new checkpoints use the corrected v2 model.
+        architecture_version = int(conf.get('architecture_version', 1))
+        if architecture_version == 1:
+            model_class = LegacyTransformersACE
+        elif architecture_version == 2:
+            model_class = TransformersACE
+        else:
+            raise ValueError(f"Unsupported architecture_version: {architecture_version}")
+        radial_mlp_default = 64 if architecture_version == 1 else 32
+
         # 3. Initialize Architecture
-        self.model = TransformersACE(
+        self.model = model_class(
             r_max=self.r_max,
             l_max=conf['l_max'],
             num_radial=conf['num_radial'],
@@ -59,8 +92,10 @@ class TransformersACECalculator(Calculator):
             gaussian_width=conf.get('gaussian_width', 0.5),
             descriptor_passes=conf.get('descriptor_passes', 1),
             descriptor_residual=conf.get('descriptor_residual', True),
-            radial_mlp_hidden=conf.get('radial_mlp_hidden', 64),
+            radial_mlp_hidden=conf.get('radial_mlp_hidden', radial_mlp_default),
             radial_mlp_layers=conf.get('radial_mlp_layers', 2),
+            correlation_order=conf.get('correlation_order', 4),
+            correlation_channels=conf.get('correlation_channels', 16),
             attention_num_heads=conf.get('attention_num_heads', conf.get('transformer_num_heads', 4)),
             attention_key_dim=conf.get('attention_key_dim', None),
             attention_ffn_hidden=conf.get('attention_ffn_hidden', conf.get('transformer_ffn_hidden', None)),
@@ -72,7 +107,7 @@ class TransformersACECalculator(Calculator):
         )
         
         # 4. Load Weights
-        self.model.load_state_dict(checkpoint['model_state_dict'], strict=False)
+        self.model.load_state_dict(checkpoint['model_state_dict'], strict=True)
         self.model.to(self.device)
         self.model.eval()
 

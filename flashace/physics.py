@@ -250,3 +250,203 @@ class ACE_Descriptor(nn.Module):
 
         # Mix and Add Residual
         return self.mix(B_basis) + A_basis
+
+
+class SmoothPolynomialCutoff(nn.Module):
+    """Compact C2 cutoff used by the corrected descriptor and attention.
+
+    The quintic smoothstep and its first two derivatives are zero at ``r_max``.
+    This matters for stable forces, stress, phonons, and variable-cell dynamics.
+    """
+
+    def __init__(self, r_max: float):
+        super().__init__()
+        self.r_max = float(r_max)
+
+    def forward(self, distances: torch.Tensor) -> torch.Tensor:
+        x = torch.clamp(distances / self.r_max, min=0.0, max=1.0)
+        envelope = 1.0 - 10.0 * x.pow(3) + 15.0 * x.pow(4) - 6.0 * x.pow(5)
+        return torch.where(distances < self.r_max, envelope, torch.zeros_like(envelope))
+
+
+class SmoothACERadialBasis(nn.Module):
+    """Radial basis multiplied by a compact C2 cutoff envelope."""
+
+    def __init__(
+        self,
+        r_max: float,
+        num_radial: int,
+        basis_type: str = "bessel",
+        trainable: bool = False,
+        gaussian_width: float = 0.5,
+    ):
+        super().__init__()
+        self.cutoff = SmoothPolynomialCutoff(r_max)
+        basis_type = basis_type.lower()
+        if basis_type == "bessel":
+            self.basis = BesselBasis(r_max, num_radial, trainable=trainable)
+        elif basis_type == "gaussian":
+            self.basis = GaussianBasis(
+                r_max,
+                num_radial,
+                width_factor=gaussian_width,
+                trainable=trainable,
+            )
+        else:
+            raise ValueError(f"Unsupported radial basis type: {basis_type}")
+
+    def forward(self, distances: torch.Tensor) -> torch.Tensor:
+        return self.cutoff(distances).unsqueeze(-1) * self.basis(distances)
+
+
+class ACEV2Descriptor(nn.Module):
+    """Local equivariant ACE-style density correlations through body order four.
+
+    Neighbor species and geometry first form an equivariant density ``A``. Learned
+    Clebsch-Gordan products recursively contract that same permutation-invariant
+    density, retaining independent multiplicity channels instead of collapsing
+    them with a shared vector of ones. The central species remains an explicit
+    part of every atomic representation.
+    """
+
+    def __init__(
+        self,
+        r_max: float,
+        l_max: int,
+        num_radial: int,
+        hidden_dim: int,
+        correlation_order: int = 4,
+        correlation_channels: int = 16,
+        radial_basis_type: str = "bessel",
+        radial_trainable: bool = False,
+        gaussian_width: float = 0.5,
+        radial_mlp_hidden: int = 32,
+        radial_mlp_layers: int = 2,
+    ):
+        super().__init__()
+        if correlation_order < 2 or correlation_order > 4:
+            raise ValueError("correlation_order must be between 2 and 4")
+
+        self.r_max = float(r_max)
+        self.hidden_dim = int(hidden_dim)
+        self.correlation_order = int(correlation_order)
+
+        output_irreps = []
+        correlation_irreps = []
+        for l in range(l_max + 1):
+            output_mul = hidden_dim if l == 0 else hidden_dim // (2 if l == 1 else 4)
+            corr_mul = correlation_channels if l == 0 else correlation_channels // (2 if l == 1 else 4)
+            output_irreps.append((max(1, output_mul), (l, (-1) ** l)))
+            correlation_irreps.append((max(1, corr_mul), (l, (-1) ** l)))
+
+        self.irreps_out = o3.Irreps(output_irreps)
+        self.irreps_correlation = o3.Irreps(correlation_irreps)
+        self.irreps_sh = o3.Irreps.spherical_harmonics(l_max)
+        self.irreps_node = o3.Irreps(f"{hidden_dim}x0e")
+
+        self.cutoff = SmoothPolynomialCutoff(r_max)
+        self.radial_basis = SmoothACERadialBasis(
+            r_max,
+            num_radial,
+            basis_type=radial_basis_type,
+            trainable=radial_trainable,
+            gaussian_width=gaussian_width,
+        )
+        self.sh = o3.SphericalHarmonics(
+            self.irreps_sh,
+            normalize=True,
+            normalization="component",
+        )
+        self.tp_density = o3.FullyConnectedTensorProduct(
+            self.irreps_node,
+            self.irreps_sh,
+            self.irreps_correlation,
+            internal_weights=False,
+            shared_weights=False,
+        )
+
+        radial_mlp_hidden = max(1, int(radial_mlp_hidden))
+        radial_mlp_layers = max(1, int(radial_mlp_layers))
+        mlp_sizes = (
+            [num_radial]
+            + [radial_mlp_hidden] * (radial_mlp_layers - 1)
+            + [self.tp_density.weight_numel]
+        )
+        self.radial_net = FullyConnectedNet(mlp_sizes, torch.nn.functional.silu)
+
+        # A is body order two. Each recursive A-product adds one body order.
+        self.contractions = nn.ModuleList(
+            [
+                o3.FullyConnectedTensorProduct(
+                    self.irreps_correlation,
+                    self.irreps_correlation,
+                    self.irreps_correlation,
+                    internal_weights=True,
+                    shared_weights=True,
+                )
+                for _ in range(self.correlation_order - 2)
+            ]
+        )
+        self.order_mix = nn.ModuleList(
+            [
+                o3.Linear(self.irreps_correlation, self.irreps_out)
+                for _ in range(self.correlation_order - 1)
+            ]
+        )
+        self.center_proj = nn.Linear(hidden_dim, hidden_dim, bias=False)
+
+    def _density(
+        self,
+        node_attrs: torch.Tensor,
+        edge_index: torch.Tensor,
+        edge_vec: torch.Tensor,
+        edge_len: torch.Tensor,
+    ):
+        sender, receiver = edge_index
+        radial = self.radial_basis(edge_len)
+        harmonics = self.sh(edge_vec)
+        weights = self.radial_net(radial)
+        edge_features = self.tp_density(node_attrs[sender], harmonics, weights)
+
+        density = torch.zeros(
+            node_attrs.shape[0],
+            self.irreps_correlation.dim,
+            device=node_attrs.device,
+            dtype=edge_features.dtype,
+        )
+        density.index_add_(0, receiver, edge_features)
+        return density, edge_features, self.cutoff(edge_len)
+
+    def forward(
+        self,
+        node_attrs: torch.Tensor,
+        edge_index: torch.Tensor,
+        edge_vec: torch.Tensor,
+        edge_len: torch.Tensor,
+        return_edge_features: bool = False,
+    ):
+        density, edge_features, cutoff = self._density(
+            node_attrs,
+            edge_index,
+            edge_vec,
+            edge_len,
+        )
+
+        non_scalar_dim = self.irreps_out.dim - self.hidden_dim
+        center = torch.cat(
+            (
+                self.center_proj(node_attrs),
+                node_attrs.new_zeros((node_attrs.shape[0], non_scalar_dim)),
+            ),
+            dim=-1,
+        )
+
+        correlation = density
+        output = center + self.order_mix[0](correlation)
+        for contraction, mix in zip(self.contractions, self.order_mix[1:]):
+            correlation = contraction(correlation, density)
+            output = output + mix(correlation)
+
+        if return_edge_features:
+            return output, edge_features, cutoff
+        return output
