@@ -50,7 +50,7 @@ def plot_metric_history(history, save_dir="plots"):
     history_path = os.path.join(save_dir, "training_history.csv")
     fieldnames = list(history.keys())
     with open(history_path, "w", newline="") as handle:
-        writer = csv.writer(handle)
+        writer = csv.writer(handle, lineterminator="\n")
         writer.writerow(fieldnames)
         writer.writerows(zip(*(history[name] for name in fieldnames)))
 

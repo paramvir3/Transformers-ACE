@@ -50,8 +50,8 @@ def parse_args():
         action="store_true",
         help="Relax positions and cell (implies --relax)",
     )
-    parser.add_argument("--fmax", type=float, default=0.03, help="Force convergence in eV/Angstrom")
-    parser.add_argument("--steps", type=int, default=500, help="Maximum relaxation steps")
+    parser.add_argument("--fmax", type=float, default=0.01, help="Force convergence in eV/Angstrom")
+    parser.add_argument("--steps", type=int, default=100000, help="Maximum relaxation steps")
     return parser.parse_args()
 
 

@@ -20,7 +20,7 @@ from ase.spacegroup.symmetrize import check_symmetry
 
 SCRIPT_PATH = Path(__file__).resolve()
 REPO_ROOT = next(
-    (parent for parent in SCRIPT_PATH.parents if (parent / "flashace" / "__init__.py").is_file()),
+    (parent for parent in SCRIPT_PATH.parents if (parent / "transformers_ace" / "__init__.py").is_file()),
     None,
 )
 if REPO_ROOT is None:
@@ -44,9 +44,8 @@ def parse_args():
     parser.add_argument("--hydrostatic", action="store_true", help="Allow only hydrostatic cell strain")
     parser.add_argument("--fix-symmetry", action="store_true", help="Preserve the initial space-group symmetry")
     parser.add_argument("--fixed-cell", action="store_true", help="Relax positions without changing the cell")
-    parser.add_argument("--output", type=Path, default=Path("POSCAR_relaxed"))
-    parser.add_argument("--initial-output", type=Path, default=Path("POSCAR_initial"))
-    parser.add_argument("--log", type=Path, default=Path("relax.log"))
+    parser.add_argument("--phase", default=None, help="Optional phase name for output filenames")
+    parser.add_argument("--output-dir", type=Path, default=Path("."), help="Directory for outputs")
     return parser.parse_args()
 
 
@@ -114,7 +113,14 @@ def main():
     atoms = read(structure_path)
     atoms.pbc = True
     atoms = sort(atoms.repeat(tuple(args.repeat)))
-    write(args.initial_output, atoms, format="vasp", direct=True, sort=True)
+    output_dir = args.output_dir.expanduser().resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    phase_name = args.phase or structure_path.stem
+    initial_output = output_dir / f"{phase_name}_initial.vasp"
+    relaxed_output = output_dir / f"{phase_name}_relaxed.vasp"
+    log_path = output_dir / f"{phase_name}.log"
+
+    write(initial_output, atoms, format="vasp", direct=True, sort=True)
 
     print(f"Loaded structure: {structure_path}")
     print(f"Atoms after repeat: {len(atoms)}")
@@ -130,14 +136,15 @@ def main():
         fixed_cell=args.fixed_cell,
         fmax=args.fmax,
         steps=args.steps,
-        logfile=args.log,
+        logfile=log_path,
     )
 
     print_symmetry("Final", relaxed)
     relaxed = sort(relaxed)
-    write(args.output, relaxed, format="vasp", direct=True, sort=True)
-    print(f"\nSaved relaxed structure: {args.output.resolve()}")
-    print(f"Saved optimization log:  {args.log.resolve()}")
+    write(relaxed_output, relaxed, format="vasp", direct=True, sort=True)
+    print(f"\nSaved initial structure: {initial_output}")
+    print(f"Saved relaxed structure:  {relaxed_output}")
+    print(f"Saved optimization log:   {log_path}")
 
 
 if __name__ == "__main__":

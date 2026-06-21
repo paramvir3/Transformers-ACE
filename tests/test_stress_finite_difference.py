@@ -21,12 +21,19 @@ def _data(model, deformation=None):
         [[0, 1, 0, 2, 1, 2], [1, 0, 2, 0, 2, 1]],
         dtype=torch.long,
     )
+    edge_shift = torch.tensor(
+        [
+            [1.0, 0.0, 0.0], [-1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0], [0.0, -1.0, 0.0],
+            [0.0, 0.0, 1.0], [0.0, 0.0, -1.0],
+        ]
+    )
     return {
         "z": torch.tensor([55, 53, 82]),
         "pos": pos,
         "cell": cell,
         "edge_index": edge_index,
-        "edge_shift": torch.zeros((edge_index.shape[1], 3)),
+        "edge_shift": edge_shift,
         "volume": torch.abs(torch.det(cell)),
     }
 

@@ -63,13 +63,15 @@ forces_weight: 10.0
 forces_weight_final: 10.0
 forces_weight_decay_epochs: 0
 stress_weight: 1000.0
+stress_weight_final: 100000.0  # CsPbI3 stress scale is ~1e-3 eV/Angstrom^3
+stress_weight_ramp_epochs: 20
 aux_force_weight: 0.0
 aux_stress_weight: 0.0
 force_consistency_weight: 0.0
 sobolev_weight: 0.001
 sobolev_sigma: 0.02
-displacement_prob: 0.1
-displacement_sigma: 0.02
+displacement_prob: 0.0   # Perturbed geometries require newly evaluated labels
+displacement_sigma: 0.0
 
 temperature_scale_start: 1.3
 temperature_scale_end: 1.0
