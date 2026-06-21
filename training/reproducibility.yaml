@@ -1,8 +1,8 @@
 schema_version: 1
-run_name: cspbi3_cpu_100_epoch
+run_name: cspbi3_cpu_100_epoch_stress_improved
 code:
   repository: https://github.com/paramvir3/Transformers-ACE
-  implementation_commit: bc906b5652dbf22a9c882e0376251195a8c11e68
+  implementation_revision: same_commit_as_this_manifest
   command: python ../train.py --config config.yaml
   working_directory: training
 
@@ -17,23 +17,28 @@ dataset:
 
 configuration:
   path: training/config.yaml
-  sha256: c2c0b98c868e84c23c545dbdffdb5fffa1c97bed3e029ee116f7d23400fced6c
+  sha256: 1b9a8e314d55459479ee2ff4e16453c6f5d764956db6ffd9b0fa25d9bed08b74
   epochs: 100
   device: cpu
+  energy_weight: 1.0
+  forces_weight: 10.0
+  stress_weight_start: 1000.0
+  stress_weight_final: 100000.0
+  stress_weight_ramp_epochs: 20
   global_rng_seed: not_recorded
 
 checkpoint:
   path: training/model.pt
-  sha256: 37067031060d90be610ba7c9062c9fcc731172fde8069ce1b8530bbcbc18bfc9
+  sha256: 10787df0466b9e901efec8c2ef061d75e74ca785a81a0f91c84749e280769a57
   epoch: 100
   energy_shift_eV_per_atom: -31.85975279855302
 
 history:
   path: training/plots/training_history.csv
-  sha256: c70e1f159fc757188dd9ef0a9c3ba5dbde4a60dd81e53fd9a6460b88840b93fb
+  sha256: 69e4c49db41426879e873e46ce99723f374bfab0d4f319a28d52ef72ee973e61
   epochs: 100
   curve_path: training/plots/training_curves.png
-  curve_sha256: 7d971f57cbdc61d9db032a77f3663e9734a1f66c5c0570f82ead95d0b1d0e411
+  curve_sha256: d184d24800c3d3a60eff22d72049fa978c3ee7b31af14987f5999c930a41ce1d
 
 environment:
   operating_system: macOS-26.3.1-arm64

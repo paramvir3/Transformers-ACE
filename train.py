@@ -91,6 +91,53 @@ def build_neighbor_tensors(atoms, r_max):
     return edge_index, edge_shift
 
 
+def _stress_matrix(value):
+    """Convert an ASE/ExtXYZ stress-like value to a symmetric 3x3 matrix."""
+    array = np.asarray(value, dtype=float)
+    if array.shape == (6,):
+        xx, yy, zz, yz, xz, xy = array
+        array = np.array(
+            [[xx, xy, xz], [xy, yy, yz], [xz, yz, zz]],
+            dtype=float,
+        )
+    elif array.size == 9:
+        array = array.reshape(3, 3)
+    else:
+        raise ValueError(
+            f"Stress must contain 6 Voigt or 9 matrix components, got shape {array.shape}"
+        )
+    return 0.5 * (array + array.T)
+
+
+def stress_target_from_atoms(atoms):
+    """Return stress in eV/Angstrom^3 and whether a label was present."""
+    results = atoms.calc.results if atoms.calc is not None else {}
+    if 'stress' in results:
+        return _stress_matrix(results['stress']), True
+    if 'stress' in atoms.info:
+        return _stress_matrix(atoms.info['stress']), True
+
+    # The atomistic-data convention is virial = -V * stress. ASE ExtXYZ
+    # normally performs this conversion while reading, but retain a correct
+    # fallback for Atoms objects assembled by other readers.
+    if 'virial' in results:
+        return -_stress_matrix(results['virial']) / atoms.get_volume(), True
+    if 'virial' in atoms.info:
+        return -_stress_matrix(atoms.info['virial']) / atoms.get_volume(), True
+
+    return np.zeros((3, 3), dtype=float), False
+
+
+def stress_to_voigt(stress):
+    """Return ASE-order Voigt components: xx, yy, zz, yz, xz, xy."""
+    return torch.stack(
+        [
+            stress[0, 0], stress[1, 1], stress[2, 2],
+            stress[1, 2], stress[0, 2], stress[0, 1],
+        ]
+    )
+
+
 class AtomisticDataset(Dataset):
     def __init__(self, atoms_list, r_max, random_rotation=False, precompute_neighbors=False):
         self.atoms_list = atoms_list
@@ -119,28 +166,8 @@ class AtomisticDataset(Dataset):
         t_E = torch.tensor(atoms.get_potential_energy(), dtype=torch.float32)
         t_F = torch.tensor(atoms.get_forces(), dtype=torch.float32)
         
-        # Stress (Robust Load)
-        s_obj = None
-        if atoms.calc is not None and 'stress' in atoms.calc.results:
-            s_obj = atoms.calc.results['stress']
-        elif 'stress' in atoms.info:
-            s_obj = atoms.info['stress']
-        elif 'virial' in atoms.info:
-            s_obj = atoms.info['virial'] / atoms.get_volume()
-            
-        if s_obj is None:
-            s_voigt = np.zeros((3,3))
-        else:
-            s_voigt = np.array(s_obj)
-
-        if s_voigt.shape == (6,):
-            s_mat = np.array([[s_voigt[0], s_voigt[5], s_voigt[4]],
-                              [s_voigt[5], s_voigt[1], s_voigt[3]],
-                              [s_voigt[4], s_voigt[3], s_voigt[2]]])
-            t_S = torch.tensor(s_mat, dtype=torch.float32)
-        else:
-            t_S = torch.tensor(s_voigt, dtype=torch.float32)
-            if len(t_S.shape) == 1: t_S = t_S.view(3,3)
+        stress, has_stress = stress_target_from_atoms(atoms)
+        t_S = torch.tensor(stress, dtype=torch.float32)
         
         # Neighbors
         if self.random_rotation:
@@ -168,6 +195,7 @@ class AtomisticDataset(Dataset):
             't_E': t_E,
             't_F': t_F,
             't_S': t_S,
+            'has_stress': torch.tensor(has_stress, dtype=torch.bool),
         }
     
     @staticmethod
@@ -180,7 +208,7 @@ class MetricTracker:
         self.sum_force_mse = 0.0
         self.sum_force_mae = 0.0
         self.n_atoms = 0; self.n_stress_comp = 0; self.n_struct = 0
-    def update(self, p_E, p_F, p_S, t_E, t_F, t_S, n_ats):
+    def update(self, p_E, p_F, p_S, t_E, t_F, t_S, include_stress, n_ats):
         err_e = (p_E - t_E).item() / n_ats
         self.sse_e += err_e**2 * n_ats
         diff_f = p_F - t_F
@@ -190,9 +218,11 @@ class MetricTracker:
         self.sum_force_mse += force_mse
         self.sum_force_mae += force_mae
         self.n_struct += 1
-        if torch.norm(t_S) > 1e-6:
-             self.sse_s += (p_S - t_S).pow(2).sum().item()
-             self.n_stress_comp += 9
+        if include_stress:
+            self.sse_s += (
+                stress_to_voigt(p_S) - stress_to_voigt(t_S)
+            ).pow(2).sum().item()
+            self.n_stress_comp += 6
         self.n_atoms += n_ats
     def get_metrics(self):
         rmse_e = np.sqrt(self.sse_e / self.n_atoms) if self.n_atoms > 0 else 0.0
@@ -309,6 +339,14 @@ def main():
 
     print(f"Reading data from {config['train_file']}...")
     all_atoms = read(config['train_file'], index=":")
+    stress_labels = sum(stress_target_from_atoms(atoms)[1] for atoms in all_atoms)
+    print(f"Stress labels: {stress_labels}/{len(all_atoms)} structures")
+    configured_stress_weight = max(
+        float(config.get('stress_weight', 0.0)),
+        float(config.get('stress_weight_final', config.get('stress_weight', 0.0))),
+    )
+    if configured_stress_weight > 0.0 and stress_labels == 0:
+        raise ValueError("stress_weight is nonzero, but the dataset contains no stress labels")
 
     if config['valid_file']:
         val_atoms = read(config['valid_file'], index=":")
@@ -454,6 +492,16 @@ def main():
         frac = min(1.0, epoch_idx / max(1, force_w_decay_epochs))
         return force_w_start + frac * (force_w_final - force_w_start)
 
+    stress_w_start = float(config.get('stress_weight', 0.0))
+    stress_w_final = float(config.get('stress_weight_final', stress_w_start))
+    stress_w_ramp_epochs = int(config.get('stress_weight_ramp_epochs', 0))
+
+    def _stress_weight(epoch_idx: int) -> float:
+        if stress_w_ramp_epochs <= 0 or stress_w_start == stress_w_final:
+            return stress_w_start
+        frac = min(1.0, epoch_idx / max(1, stress_w_ramp_epochs))
+        return stress_w_start + frac * (stress_w_final - stress_w_start)
+
     resume_path = config.get('resume_from')
     start_epoch = 0
 
@@ -543,6 +591,11 @@ def main():
     force_consistency_weight = float(config.get('force_consistency_weight', 0.0))
     displacement_prob = float(config.get('displacement_prob', 0.0))
     displacement_sigma = float(config.get('displacement_sigma', 0.0))
+    if displacement_prob > 0.0:
+        raise ValueError(
+            "displacement augmentation cannot reuse the original DFT labels; "
+            "set displacement_prob and displacement_sigma to 0"
+        )
     aux_force_weight = float(config.get('aux_force_weight', 0.0))
     aux_stress_weight = float(config.get('aux_stress_weight', 0.0))
     sobolev_weight = float(config.get('sobolev_weight', 0.0))
@@ -550,13 +603,14 @@ def main():
     
     print(
         f"{'Epoch':>5} | {'Loss':>10} | {'E (meV)':>10} | {'force_RMSE':>12} | {'force_MSE':>12} | {'force_MAE':>12} | {'S_RMSE':>10} || "
-        f"{'Val Loss':>10} | {'Val E':>10} | {'Val force_RMSE':>16} | {'Val force_MSE':>16}"
+        f"{'Val Loss':>10} | {'Val E':>10} | {'Val force_RMSE':>16} | {'Val force_MSE':>16} | {'Val S_RMSE':>12}"
     )
     print("-" * 170)
     
     force_loss_ema = None
     for epoch in range(start_epoch, config['epochs']):
         force_weight = _force_weight(epoch)
+        stress_weight = _stress_weight(epoch)
         model.train()
         train_metrics = MetricTracker()
         total_loss = 0.0
@@ -569,20 +623,7 @@ def main():
             batch_loss = 0.0
 
             # --- GRADIENT ACCUMULATION (FP32/AMP) ---
-            # Optional small-displacement augmentation
             items = list(batch)
-            if displacement_prob > 0.0 and displacement_sigma > 0.0:
-                augmented = []
-                for item in items:
-                    if torch.rand(1).item() < displacement_prob:
-                        perturbed = {
-                            k: (v.clone() if isinstance(v, torch.Tensor) else v)
-                            for k, v in item.items()
-                        }
-                        noise = torch.randn_like(perturbed['pos']) * displacement_sigma
-                        perturbed['pos'] = perturbed['pos'] + noise
-                        augmented.append(perturbed)
-                items.extend(augmented)
 
             for item in items:
                 for k, v in item.items():
@@ -595,8 +636,8 @@ def main():
                 with torch.autocast(device_type=device_type, dtype=amp_dtype, enabled=use_amp):
                     temp_scale = _temperature_scale(epoch, force_loss_ema)
                     stress_target = (
-                        (torch.norm(item['t_S']) > 1e-6).item()
-                        and float(config.get('stress_weight', 0.0)) > 0.0
+                        bool(item['has_stress'].item())
+                        and stress_weight > 0.0
                     )
                     p_E, p_F, p_S, aux = model(
                         item,
@@ -612,11 +653,13 @@ def main():
                     loss_f = torch.mean((p_F - item['t_F'])**2)
                     loss_s = torch.tensor(0.0, device=device)
                     if stress_target:
-                        loss_s = torch.mean((p_S - item['t_S'])**2)
+                        loss_s = torch.mean(
+                            (stress_to_voigt(p_S) - stress_to_voigt(item['t_S']))**2
+                        )
 
                     loss_item = (config['energy_weight'] * loss_e) + \
                                 (force_weight * loss_f) + \
-                                (config['stress_weight'] * loss_s)
+                                (stress_weight * loss_s)
 
                     if aux_force_weight > 0.0 and 'force' in aux:
                         loss_item = loss_item + aux_force_weight * torch.mean((aux['force'] - item['t_F'])**2)
@@ -663,7 +706,10 @@ def main():
 
                 with torch.no_grad():
                     pred_E_abs = p_E + baseline_energy(item['z'])
-                    train_metrics.update(pred_E_abs, p_F, p_S, item['t_E'], item['t_F'], item['t_S'], n_ats)
+                    train_metrics.update(
+                        pred_E_abs, p_F, p_S, item['t_E'], item['t_F'], item['t_S'],
+                        stress_target, n_ats,
+                    )
                     if force_loss_ema is None:
                         force_loss_ema = loss_f.detach()
                     else:
@@ -714,8 +760,8 @@ def main():
                 # inside the model during validation.
                 with torch.autocast(device_type=device_type, dtype=amp_dtype, enabled=use_amp):
                     stress_target = (
-                        (torch.norm(item['t_S']) > 1e-6).item()
-                        and float(config.get('stress_weight', 0.0)) > 0.0
+                        bool(item['has_stress'].item())
+                        and stress_weight > 0.0
                     )
                     p_E, p_F, p_S, _ = model(
                         item,
@@ -728,15 +774,20 @@ def main():
                     loss_f = torch.mean((p_F - item['t_F'])**2)
                     loss_s = torch.tensor(0.0, device=device)
                     if stress_target:
-                        loss_s = torch.mean((p_S - item['t_S'])**2)
+                        loss_s = torch.mean(
+                            (stress_to_voigt(p_S) - stress_to_voigt(item['t_S']))**2
+                        )
                     val_loss_accum += (
                         (config['energy_weight'] * loss_e)
                         + (force_weight * loss_f)
-                        + (config['stress_weight'] * loss_s)
+                        + (stress_weight * loss_s)
                     )
 
                 pred_E_abs = p_E + baseline_energy(item['z'])
-                val_metrics.update(pred_E_abs, p_F, p_S, item['t_E'], item['t_F'], item['t_S'], n_ats)
+                val_metrics.update(
+                    pred_E_abs, p_F, p_S, item['t_E'], item['t_F'], item['t_S'],
+                    stress_target, n_ats,
+                )
 
         avg_val_loss = val_loss_accum / len(val_atoms)
         val_e, val_f, val_s, val_f_mse, val_f_mae = val_metrics.get_metrics()
@@ -756,7 +807,7 @@ def main():
         print(
             f"{epoch+1:5d} | "
             f"{avg_train_loss:10.4f} | {tr_e:10.2f} | {tr_f:12.6f} | {tr_f_mse:12.6f} | {tr_f_mae:12.6f} | {tr_s:10.4f} || "
-            f"{avg_val_loss:10.4f} | {val_e:10.2f} | {val_f:16.6f} | {val_f_mse:16.6f}"
+            f"{avg_val_loss:10.4f} | {val_e:10.2f} | {val_f:16.6f} | {val_f_mse:16.6f} | {val_s:12.6f}"
         )
 
         if ckpt_interval > 0 and (epoch + 1) % ckpt_interval == 0:
