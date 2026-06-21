@@ -74,11 +74,13 @@ solve_atomic_energies: false      # Fit per-species reference energies from the 
 # ------------------------------------------------------------------------------
 # 4. LOSS WEIGHTS
 # ------------------------------------------------------------------------------
-energy_weight: 100.0
+energy_weight: 1.0               # Energy term uses squared error per atom
 forces_weight: 10.0              # Emphasize forces early
 forces_weight_final: 10.0        # Optional target force weight to anneal toward
 forces_weight_decay_epochs: 0    # Epochs to linearly decay force weight (0 = no decay)
-stress_weight: 1000.0            # Energy-derived stress loss; set 0 to disable
+stress_weight: 1000.0            # Initial energy-derived stress weight
+stress_weight_final: 100000.0    # Balances ~1e-3 eV/Angstrom^3 stresses with force loss
+stress_weight_ramp_epochs: 20    # Avoid abrupt second-derivative gradients at initialization
 
 # Auxiliary and regularization weights
 aux_force_weight: 0.0            # Direct force heads are disabled to keep forces conservative
@@ -88,8 +90,8 @@ sobolev_weight: 0.001            # Very light perturbation regularization
 sobolev_sigma: 0.02
 
 # Small-displacement augmentation
-displacement_prob: 0.1
-displacement_sigma: 0.02
+displacement_prob: 0.0           # Requires newly evaluated labels; do not reuse original DFT labels
+displacement_sigma: 0.0
 
 # Attention controls
 temperature_scale_start: 1.3
