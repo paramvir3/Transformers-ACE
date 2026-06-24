@@ -1,6 +1,6 @@
-# LAMMPS CsPbI3 Smoke Test
+# LAMMPS CsPbI3 Tests
 
-This folder contains a standalone LAMMPS smoke test for the native
+This folder contains standalone LAMMPS tests for the native
 `pair_style transformers_ace` interface. It mirrors the workflow used by
 NequIP/Allegro/MACE-style LAMMPS plugins:
 
@@ -12,7 +12,7 @@ pair_coeff      * * ../model.transformers_ace.pt Cs Pb I
 The included run was tested with LAMMPS `30 Mar 2026 - Development` on one MPI
 rank using `newton off`.
 
-## Files
+## Unbiased Smoke Test
 
 - `model.transformers_ace.pt`: exported TorchScript model for LAMMPS/LibTorch.
 - `test_lammps_cspbi3/data.CPI`: 640-atom CsPbI3 starting structure.
@@ -40,3 +40,18 @@ PLUMED line to the input:
 ```lammps
 fix plm all plumed plumedfile plumed.dat outfile plumed.out
 ```
+
+## PLUMED Rare-Event Test
+
+`test_plumed_cspbi3/` contains an explicit biased-dynamics example for a
+non-perovskite delta CsPbI3 to perovskite CsPbI3 transition. It uses the same
+shared `model.transformers_ace.pt`, a 640-atom starting structure, and a PLUMED
+`DSFTHREE` structure-factor collective variable:
+
+```bash
+cd tests/run_lammps/test_plumed_cspbi3
+/path/to/lammps/build/lmp -in in.transformers_ace
+```
+
+See `test_plumed_cspbi3/README.md` for the tracked inputs and ignored generated
+outputs.
