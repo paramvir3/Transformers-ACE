@@ -20,11 +20,11 @@ plot_dir: "plots"                # training_curves.png and training_history.csv
 # ------------------------------------------------------------------------------
 r_max: 6
 l_max: 2
-num_radial: 8
-hidden_dim: 32
-num_layers: 1                   # One strictly local neighbor-set attention block
+num_radial: 12
+hidden_dim: 64
+num_layers: 1                    # One strictly local neighbor-set attention block
 architecture_version: 2
-correlation_order: 4             # ACE body order; allowed 2-6, default 4 is conservative
+correlation_order: 4             # Density, 3-body, and 4-body ACE correlations
 correlation_channels: 16         # Compact independent CG contraction channels
 attention_num_heads: 2           # Local invariant attention heads over cutoff neighbors
 attention_key_dim: null          # Per-head scalar key width (null chooses a conservative default)
@@ -32,16 +32,16 @@ attention_ffn_hidden: null       # Scalar FFN width after equivariant attention
 attention_dropout: 0.03          # Light regularization for the small correlated dataset
 attention_layer_scale_init: 0.01 # Small residual scale for stable deep local attention
 attention_distance_penalty: true # Penalize long local edges in attention logits
-radial_basis_type: "bessel"      # Options: bessel, gaussian
-radial_trainable: false          # Make radial frequencies/centers learnable
+radial_basis_type: "bessel"       # Options: bessel, gaussian
+radial_trainable: false           # Make radial frequencies/centers learnable
 gaussian_width: 0.5              # Relative Gaussian width multiplier (only used if basis=gaussian)
-radial_mlp_hidden: 32            # Factorized compact radial mixing
-radial_mlp_layers: 2             # Layers for the radial mixing MLP
+radial_mlp_hidden: 32           # Factorized compact radial mixing
+radial_mlp_layers: 2            # Layers for the radial mixing MLP
 
 # ------------------------------------------------------------------------------
 # 3. TRAINING PARAMETERS
 # ------------------------------------------------------------------------------
-epochs: 200
+epochs: 100
 batch_size: 8
 # Higher force focus with stable LR schedule
 learning_rate: 0.001
@@ -66,8 +66,8 @@ torch_num_interop_threads: 1     # Avoid nested parallel work competing for the 
 num_workers: 0                   # Stable on macOS; model math still uses all CPU threads
 checkpoint_dir: "checkpoints"     # Directory to stash periodic checkpoints
 checkpoint_interval: 0           # Save a checkpoint every N epochs (0 disables)
-early_stopping_patience: 50      # Stop after sustained validation non-improvement
-early_stopping_min_epoch: 55     # Begin monitoring after the stress ramp settles
+early_stopping_patience: 20      # Stop after sustained validation non-improvement
+early_stopping_min_epoch: 25     # Begin monitoring after the stress ramp settles
 early_stopping_min_delta: 0.0001
 resume_from: null                # Path to a checkpoint to resume from
 resume_load_optimizer: false     # Load optimizer state when resuming
