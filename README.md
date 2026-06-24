@@ -109,6 +109,54 @@ and attach PLUMED as a normal LAMMPS fix. See [docs/LAMMPS.md](docs/LAMMPS.md).
 The working CsPbI3 standalone LAMMPS smoke test is in
 [`tests/run_lammps`](tests/run_lammps).
 
+Install PLUMED first:
+
+```bash
+brew install pkg-config
+
+git clone https://github.com/paramvir3/plumed2.git
+cd plumed2
+plumed_dir="${PWD}"
+
+./configure --enable-modules=all --prefix="${PWD}"
+make -j4
+make install
+source "${PWD}/sourceme.sh"
+export PKG_CONFIG_PATH="${plumed_dir}/lib/pkgconfig:${PKG_CONFIG_PATH}"
+```
+
+Patch and configure LAMMPS:
+
+```bash
+git clone --depth=1 https://github.com/lammps/lammps
+cd lammps
+
+cd /path/to/Transformers-ACE/lammps/pair_style
+bash patch_lammps.sh /path/to/lammps
+
+cd /path/to/lammps
+mkdir -p build
+cd build
+
+cmake \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DLAMMPS_EXCEPTIONS=yes \
+  -DCMAKE_INSTALL_PREFIX="$(pwd)" \
+  -DBUILD_MPI=ON \
+  -DPKG_MANYBODY=yes \
+  -DPKG_EXTRA-FIX=yes \
+  -DPKG_EXTRA-PAIR=yes \
+  -DPKG_EXTRA-DUMP=yes \
+  -DPKG_MOLECULE=yes \
+  -DCMAKE_PREFIX_PATH="$(python -c 'import torch; print(torch.utils.cmake_prefix_path)');${plumed_dir}" \
+  -DPKG_PLUMED=yes \
+  -DPLUMED_MODE=shared \
+  -DDOWNLOAD_PLUMED=no \
+  ../cmake
+
+make -j
+```
+
 ```bash
 python -m transformers_ace.deploy \
   --checkpoint training/model.pt \

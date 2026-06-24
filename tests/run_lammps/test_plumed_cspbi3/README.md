@@ -21,8 +21,24 @@ restart files, and post-NVT `data.NVT`/`data.eq` files are ignored.
 
 ## Run
 
-Build LAMMPS with both `pair_style transformers_ace` and PLUMED as described in
-`../../../docs/LAMMPS.md`, then run:
+Build PLUMED with all modules, then build LAMMPS with both
+`pair_style transformers_ace` and `PKG_PLUMED` as described in
+`../../../docs/LAMMPS.md`.
+
+Short version:
+
+```bash
+git clone https://github.com/paramvir3/plumed2.git
+cd plumed2
+plumed_dir="${PWD}"
+./configure --enable-modules=all --prefix="${PWD}"
+make -j4
+make install
+source "${PWD}/sourceme.sh"
+export PKG_CONFIG_PATH="${plumed_dir}/lib/pkgconfig:${PKG_CONFIG_PATH}"
+```
+
+After LAMMPS is built, run:
 
 ```bash
 cd tests/run_lammps/test_plumed_cspbi3
