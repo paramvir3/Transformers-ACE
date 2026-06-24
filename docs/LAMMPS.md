@@ -44,6 +44,78 @@ cmake ../cmake \
 make -j
 ```
 
+## Native Pair Style With PLUMED
+
+For rare-event dynamics, build the same native pair style together with
+LAMMPS' PLUMED package. On macOS with Homebrew, the important extra dependency
+is `pkg-config`, because LAMMPS discovers an existing PLUMED build through the
+`plumed.pc` metadata file.
+
+Install `pkg-config`:
+
+```bash
+brew install pkg-config
+```
+
+Build and install PLUMED first. If PLUMED is already configured in place, this
+creates the `lib/pkgconfig/plumed.pc` file that LAMMPS needs:
+
+```bash
+cd /Users/paramvir/Documents/lammps_plumed/plumed2
+make install
+```
+
+Check that PLUMED is visible:
+
+```bash
+export PKG_CONFIG_PATH="/Users/paramvir/Documents/lammps_plumed/plumed2/lib/pkgconfig:$PKG_CONFIG_PATH"
+
+pkg-config --modversion plumed
+pkg-config --libs plumed
+```
+
+Patch LAMMPS with Transformers-ACE:
+
+```bash
+cd /path/to/Transformers-ACE/lammps/pair_style
+bash patch_lammps.sh /Users/paramvir/Documents/lammps_plumed/lammps
+```
+
+Then configure LAMMPS with LibTorch from the active Transformers-ACE Python
+environment and the installed PLUMED prefix:
+
+```bash
+cd /Users/paramvir/Documents/lammps_plumed/lammps
+mkdir -p build
+cd build
+rm -rf CMakeCache.txt CMakeFiles
+
+plumed_dir="/Users/paramvir/Documents/lammps_plumed/plumed2"
+
+cmake \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DLAMMPS_EXCEPTIONS=yes \
+  -DCMAKE_INSTALL_PREFIX="$(pwd)" \
+  -DBUILD_MPI=ON \
+  -DPKG_MANYBODY=yes \
+  -DPKG_EXTRA-FIX=yes \
+  -DPKG_EXTRA-PAIR=yes \
+  -DPKG_EXTRA-DUMP=yes \
+  -DPKG_MOLECULE=yes \
+  -DCMAKE_PREFIX_PATH="$(python -c 'import torch; print(torch.utils.cmake_prefix_path)');${plumed_dir}" \
+  -DPKG_CONFIG_EXECUTABLE=/opt/homebrew/bin/pkg-config \
+  -DPKG_PLUMED=yes \
+  -DPLUMED_MODE=shared \
+  -DDOWNLOAD_PLUMED=no \
+  ../cmake
+
+make -j
+```
+
+If CMake reports that `PkgConfig` is missing, install `pkg-config` and rerun
+from a clean CMake cache. If it reports that `plumed` is missing, make sure
+`PKG_CONFIG_PATH` points to `plumed2/lib/pkgconfig`.
+
 The template input file is:
 
 ```text
@@ -84,6 +156,34 @@ for a quick check.
 This first native implementation is single-MPI-rank. It is the correct first
 step for testing standalone LAMMPS MD and PLUMED rare-event workflows; MPI
 domain decomposition can be added after validation.
+
+## CsPbI3 PLUMED Delta-To-Perovskite Test
+
+A tested LAMMPS plus PLUMED biased-dynamics example is included under:
+
+```text
+tests/run_lammps/test_plumed_cspbi3
+```
+
+The example starts from a 640-atom non-perovskite delta CsPbI3 structure and
+biases a PLUMED `DSFTHREE` structure-factor collective variable toward
+perovskite CsPbI3. The LAMMPS input uses:
+
+```lammps
+pair_style      transformers_ace
+pair_coeff      * * ../model.transformers_ace.pt Cs Pb I
+fix             1 all plumed plumedfile plumed.dat outfile plumed.log
+```
+
+Run it after building LAMMPS with both Transformers-ACE and PLUMED:
+
+```bash
+cd tests/run_lammps/test_plumed_cspbi3
+/path/to/lammps/build/lmp -in in.transformers_ace
+```
+
+The production section uses `run 50000000`. For an installation check, reduce
+that value to `run 1000`.
 
 ## Python Validation Bridge
 

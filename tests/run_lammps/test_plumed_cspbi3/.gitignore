@@ -1,0 +1,12 @@
+data.NVT
+data.eq
+COLVAR
+DELTAFS
+HILLS
+log.lammps
+out.*.lammpstrj
+plumed.log
+plumed.out
+restart.*
+restart.file
+model.transformers_ace.pt

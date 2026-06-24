@@ -117,6 +117,20 @@ python -m transformers_ace.deploy \
   --example-structure tests/cspbi3/structures/cubic_alpha_phase.vasp
 ```
 
+### PLUMED Rare-Event Example
+
+The repository includes an explicit LAMMPS plus PLUMED biased-dynamics example
+for a non-perovskite delta CsPbI3 to perovskite CsPbI3 transition:
+
+```text
+tests/run_lammps/test_plumed_cspbi3
+```
+
+It contains the LAMMPS input, PLUMED `DSFTHREE` structure-factor collective
+variable, and the 640-atom CsPbI3 starting structure. The exact macOS
+LAMMPS+PLUMED CMake build recipe is documented in
+[docs/LAMMPS.md](docs/LAMMPS.md).
+
 ## Compatibility
 
 These imports are equivalent:
