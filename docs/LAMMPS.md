@@ -46,51 +46,73 @@ make -j
 
 ## Native Pair Style With PLUMED
 
-For rare-event dynamics, build the same native pair style together with
-LAMMPS' PLUMED package. On macOS with Homebrew, the important extra dependency
-is `pkg-config`, because LAMMPS discovers an existing PLUMED build through the
-`plumed.pc` metadata file.
+For rare-event dynamics, build the native `pair_style transformers_ace` together
+with LAMMPS' PLUMED package. The sequence below is the tested macOS workflow
+using the custom PLUMED repository with the `DSFTHREE` structure-factor
+collective variable.
 
-Install `pkg-config`:
+### 1. Install PLUMED
+
+LAMMPS discovers an existing PLUMED build through `pkg-config`, so install it
+first if it is missing:
 
 ```bash
 brew install pkg-config
 ```
 
-Build and install PLUMED first. If PLUMED is already configured in place, this
-creates the `lib/pkgconfig/plumed.pc` file that LAMMPS needs:
+Then build and install PLUMED:
 
 ```bash
-cd /Users/paramvir/Documents/lammps_plumed/plumed2
+git clone https://github.com/paramvir3/plumed2.git
+cd plumed2
+plumed_dir="${PWD}"
+
+./configure --enable-modules=all --prefix="${PWD}"
+make -j4
 make install
+source "${PWD}/sourceme.sh"
+export PKG_CONFIG_PATH="${plumed_dir}/lib/pkgconfig:${PKG_CONFIG_PATH}"
+```
+
+Optional persistent shell setup:
+
+```bash
+echo "source ${plumed_dir}/sourceme.sh" >> ~/.bashrc
+echo "export PKG_CONFIG_PATH=\"${plumed_dir}/lib/pkgconfig:\${PKG_CONFIG_PATH}\"" >> ~/.bashrc
+echo "export PYTHONPATH=\"${plumed_dir}/lib/plumed/python:\${PYTHONPATH}\"" >> ~/.bashrc
 ```
 
 Check that PLUMED is visible:
 
 ```bash
-export PKG_CONFIG_PATH="/Users/paramvir/Documents/lammps_plumed/plumed2/lib/pkgconfig:$PKG_CONFIG_PATH"
-
 pkg-config --modversion plumed
 pkg-config --libs plumed
+plumed --version
 ```
 
-Patch LAMMPS with Transformers-ACE:
+### 2. Patch and configure LAMMPS
+
+Clone LAMMPS:
+
+```bash
+git clone --depth=1 https://github.com/lammps/lammps
+cd lammps
+```
+
+Patch LAMMPS with the Transformers-ACE pair style:
 
 ```bash
 cd /path/to/Transformers-ACE/lammps/pair_style
-bash patch_lammps.sh /Users/paramvir/Documents/lammps_plumed/lammps
+bash patch_lammps.sh /path/to/lammps
 ```
 
-Then configure LAMMPS with LibTorch from the active Transformers-ACE Python
-environment and the installed PLUMED prefix:
+Configure LAMMPS from the same Python environment that has PyTorch installed:
 
 ```bash
-cd /Users/paramvir/Documents/lammps_plumed/lammps
+cd /path/to/lammps
 mkdir -p build
 cd build
 rm -rf CMakeCache.txt CMakeFiles
-
-plumed_dir="/Users/paramvir/Documents/lammps_plumed/plumed2"
 
 cmake \
   -DCMAKE_BUILD_TYPE=Release \
@@ -103,7 +125,6 @@ cmake \
   -DPKG_EXTRA-DUMP=yes \
   -DPKG_MOLECULE=yes \
   -DCMAKE_PREFIX_PATH="$(python -c 'import torch; print(torch.utils.cmake_prefix_path)');${plumed_dir}" \
-  -DPKG_CONFIG_EXECUTABLE=/opt/homebrew/bin/pkg-config \
   -DPKG_PLUMED=yes \
   -DPLUMED_MODE=shared \
   -DDOWNLOAD_PLUMED=no \
@@ -112,9 +133,14 @@ cmake \
 make -j
 ```
 
-If CMake reports that `PkgConfig` is missing, install `pkg-config` and rerun
-from a clean CMake cache. If it reports that `plumed` is missing, make sure
-`PKG_CONFIG_PATH` points to `plumed2/lib/pkgconfig`.
+If CMake cannot find `PkgConfig`, add this line to the `cmake` command:
+
+```bash
+-DPKG_CONFIG_EXECUTABLE=/opt/homebrew/bin/pkg-config
+```
+
+If CMake cannot find `plumed`, make sure `PKG_CONFIG_PATH` points to
+`${plumed_dir}/lib/pkgconfig`, then rerun CMake from a clean cache.
 
 The template input file is:
 

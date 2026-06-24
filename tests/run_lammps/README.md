@@ -41,6 +41,19 @@ PLUMED line to the input:
 fix plm all plumed plumedfile plumed.dat outfile plumed.out
 ```
 
+The tested PLUMED build path is:
+
+```bash
+git clone https://github.com/paramvir3/plumed2.git
+cd plumed2
+plumed_dir="${PWD}"
+./configure --enable-modules=all --prefix="${PWD}"
+make -j4
+make install
+source "${PWD}/sourceme.sh"
+export PKG_CONFIG_PATH="${plumed_dir}/lib/pkgconfig:${PKG_CONFIG_PATH}"
+```
+
 ## PLUMED Rare-Event Test
 
 `test_plumed_cspbi3/` contains an explicit biased-dynamics example for a
