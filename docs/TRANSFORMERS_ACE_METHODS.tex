@@ -1,0 +1,527 @@
+\documentclass[10pt]{article}
+
+\usepackage[margin=0.82in]{geometry}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{booktabs,array}
+\usepackage[dvipsnames]{xcolor}
+\usepackage{enumitem}
+\usepackage{microtype}
+\usepackage{needspace}
+\usepackage{hyperref}
+
+\definecolor{DeepBlue}{HTML}{17324D}
+\definecolor{Accent}{HTML}{B54A35}
+\definecolor{SoftGray}{HTML}{F3F5F7}
+\hypersetup{colorlinks=true,linkcolor=DeepBlue,citecolor=Accent,urlcolor=DeepBlue}
+\setlist{nosep,leftmargin=1.4em}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.45em}
+\renewcommand{\arraystretch}{1.15}
+
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\calE}{\mathcal{E}}
+\newcommand{\calN}{\mathcal{N}}
+\newcommand{\calL}{\mathcal{L}}
+\newcommand{\vect}[1]{\bm{#1}}
+
+\title{\vspace{-1.5em}{\LARGE\textbf{Transformers-ACE}}\par\vspace{0.35em}
+{\large A Strictly Local Equivariant ACE-Attention Interatomic Potential}\par\vspace{0.4em}
+{\normalsize Methods and Architecture Specification, Version 2}}
+\author{Transformers-ACE project}
+\date{June 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Transformers-ACE is a local, energy-conserving machine-learned interatomic
+potential that combines compressed atomic-cluster-expansion (ACE) density
+correlations with equivariant neighbor-set attention. The architecture is built
+for scalable molecular dynamics without atom-to-atom propagation of updated
+hidden states. Periodic geometry enters through shifted displacement vectors,
+chemical and angular edge densities are represented in irreducible
+representations of $O(3)$, and learned Clebsch--Gordan products produce
+correlations through a configurable maximum body order. Attention queries depend on the
+current center, whereas keys and equivariant values depend only on fixed local
+edge features. A compact $C^2$ cutoff and a null channel in the attention
+normalization make energy and forces continuous when an edge leaves the neighbor
+list. A scalar total energy is the only predicted observable; forces and stress
+are exact derivatives of that energy. This document specifies the equations
+implemented by architecture version 2, the training objective, locality and
+equivariance properties, checkpoint semantics, and validation requirements.
+\end{abstract}
+
+\section{Design scope}
+
+The objective is an accurate short-range potential with linear system-size
+scaling and conservative dynamics. The implementation follows four constraints:
+\begin{enumerate}
+  \item all geometric interactions are restricted to a finite cutoff;
+  \item every intermediate feature has a defined $O(3)$ transformation law;
+  \item no updated hidden state of atom $j$ is transmitted to atom $i$;
+  \item energy is a scalar and all mechanical observables are its derivatives.
+\end{enumerate}
+The strictly local construction is motivated by local equivariant potentials
+such as Allegro~\cite{musaelian2023}, while the representation algebra uses the
+ACE and Euclidean-neural-network frameworks~\cite{drautz2019,geiger2022}.
+Transformers-ACE is not an EquiformerV2 implementation: it retains compact
+$\ell_{\max}=2$ channels and a local edge-attention mechanism rather than a deep
+high-degree message-passing transformer~\cite{liao2023}.
+
+\section{Periodic local environments}
+
+Let atom $i$ have Cartesian row vector $\vect r_i$, atomic number $Z_i$, and a
+periodic cell matrix $\vect h$. ASE supplies an integer image shift
+$\vect S_{ij}\in\mathbb{Z}^3$ for every directed edge $j\rightarrow i$. The
+periodic displacement and distance are
+\begin{align}
+  \vect r_{ij} &= \vect r_j-\vect r_i+\vect S_{ij}\vect h, \\
+  d_{ij} &= \lVert\vect r_{ij}\rVert_2, \qquad
+  \widehat{\vect r}_{ij}=\vect r_{ij}/d_{ij}.
+\end{align}
+The neighbor set is
+\begin{equation}
+  \calN(i)=\{j,\vect S_{ij}:d_{ij}<r_{\mathrm c}\}.
+\end{equation}
+The directed convention is important: spherical harmonics and forces are
+evaluated from neighbor to center using the same shifted vector in training and
+ASE inference.
+
+\section{Smooth radial basis}
+
+Architecture v2 uses the compact quintic envelope
+\begin{equation}
+ f_{\mathrm c}(d)=
+ \begin{cases}
+  1-10x^3+15x^4-6x^5, & 0\leq x<1,\\
+  0, & x\geq1,
+ \end{cases}
+ \qquad x=d/r_{\mathrm c}.
+ \label{eq:cutoff}
+\end{equation}
+It satisfies
+\begin{equation}
+ f_{\mathrm c}(r_{\mathrm c})=f'_{\mathrm c}(r_{\mathrm c})
+ =f''_{\mathrm c}(r_{\mathrm c})=0,
+\end{equation}
+which is required for smooth forces, stress, phonons, and cell dynamics at the
+neighbor-list boundary. The default radial basis is
+\begin{equation}
+ B_n(d)=f_{\mathrm c}(d)\sqrt{\frac{2}{r_{\mathrm c}}}
+ \frac{\sin(n\pi d/r_{\mathrm c})}{d},\qquad n=1,\ldots,N_r,
+ \label{eq:bessel}
+\end{equation}
+with the analytic $d\rightarrow0$ limit. A Gaussian basis multiplied by the
+same envelope is also available. For the CsPbI$_3$ configuration,
+$r_{\mathrm c}=6$~\AA{} and $N_r=12$.
+
+\section{Equivariant representations}
+
+A feature transforming in irrep $(\ell,p)$ is denoted
+$x^{(\ell,p)}_m$, where $m=-\ell,\ldots,\ell$ and $p\in\{+1,-1\}$
+is parity. Under $g\in O(3)$,
+\begin{equation}
+ x^{(\ell,p)}\mapsto D^{(\ell,p)}(g)x^{(\ell,p)}.
+\end{equation}
+Spherical harmonics $Y_{\ell m}(\widehat{\vect r}_{ij})$ carry parity
+$p=(-1)^\ell$. Clebsch--Gordan tensor products combine two irreps according to
+the triangle and parity rules,
+\begin{equation}
+ [x\otimes_{\mathrm{CG}}y]^{(\ell,p)}_m
+ =\sum_{\ell_1m_1,\ell_2m_2}
+ W^{\ell_1\ell_2\ell}_{c_1c_2c}
+ C^{\ell m}_{\ell_1m_1,\ell_2m_2}
+ x^{(\ell_1,p_1)}_{c_1m_1}y^{(\ell_2,p_2)}_{c_2m_2},
+ \quad p=p_1p_2.
+ \label{eq:cg}
+\end{equation}
+The coefficients $C$ are fixed by symmetry and the multiplicity mixing weights
+$W$ are learned. The implementation uses e3nn tensor products~\cite{geiger2022}.
+
+\section{Chemical-angular edge density}
+
+Atomic numbers are mapped to scalar embeddings
+$\vect e_i=\mathrm{Emb}(Z_i)\in\R^{C_0}$. A radial network maps
+$\vect B(d_{ij})$ to edge-dependent tensor-product weights. The edge density is
+\begin{equation}
+ \vect a_{ij}=
+ \mathrm{TP}_{\rho}\!\left(
+   \vect e_j,
+   \{Y_{\ell m}(\widehat{\vect r}_{ij})\}_{\ell=0}^{\ell_{\max}};
+   \mathrm{MLP}_{r}[\vect B(d_{ij})]
+ \right).
+ \label{eq:edge-density}
+\end{equation}
+Because Eq.~\eqref{eq:bessel} includes $f_{\mathrm c}$, every component of
+$\vect a_{ij}$ vanishes smoothly at the cutoff. The permutation-invariant local
+density at center $i$ is
+\begin{equation}
+ \vect A_i=\sum_{j\in\calN(i)}\vect a_{ij}.
+ \label{eq:density}
+\end{equation}
+For the default v2 model, the compact correlation irreps are
+\begin{equation}
+ 16\times0e\;\oplus\;8\times1o\;\oplus\;4\times2e,
+ \label{eq:corr-irreps}
+\end{equation}
+with total component dimension $16+3(8)+5(4)=60$.
+
+\section{ACE-style body-ordered correlations}
+
+The density $\vect A_i$ is a two-body center--neighbor representation. Learned
+recursive Clebsch--Gordan products construct correlations up to configurable
+maximum body order $\nu_{\max}$:
+\begin{align}
+ \vect C_i^{(2)} &= \vect A_i,\\
+ \vect C_i^{(\nu+1)} &= \mathrm{TP}_{\nu+1}(\vect C_i^{(\nu)},\vect A_i),
+ \qquad 2\leq\nu<\nu_{\max}.
+ \label{eq:ace-recursion}
+\end{align}
+Each tensor product has independent learned multiplicity weights. This replaces
+the architecture-v1 all-ones contraction, which made nominal copies of the same
+irrep rank deficient. Because each input density is already a sum over the
+neighbor set, Eq.~\eqref{eq:ace-recursion} is invariant to neighbor ordering and
+implicitly contains all repeated-index and distinct-neighbor terms admitted by
+the channel and angular truncations.
+
+The node irreps are
+\begin{equation}
+ 64\times0e\;\oplus\;32\times1o\;\oplus\;16\times2e,
+ \label{eq:node-irreps}
+\end{equation}
+with component dimension $240$. The initial center state is
+\begin{equation}
+ \vect h_i^{(0)}=
+ \mathrm{Center}(\vect e_i)
+ +\sum_{\nu=2}^{\nu_{\max}}\mathrm{Linear}_{\nu}(\vect C_i^{(\nu)}).
+ \label{eq:center-state}
+\end{equation}
+Only scalar slots receive the explicit center embedding. Thus $Z_i$ remains
+identifiable even if two centers have identical neighbor densities.
+
+The construction is a compressed, learned ACE density-correlation basis. It is
+not claimed to be a formally complete, untruncated linear ACE basis. The
+ACEsuit/EquivariantTensors.jl construction enumerates sparse many-body
+$(n,\ell,m)$ specifications, applies symmetric products, and then uses sparse
+permutation-invariant Clebsch--Gordan symmetrization maps~\cite{equivarianttensors}.
+Transformers-ACE keeps the same $O(3)$ tensor-product rules and neighbor
+permutation invariance, but uses a learned low-rank density polynomial for
+scalability. Increasing $\ell_{\max}$, radial resolution, multiplicities, and
+correlation order expands the representation systematically but changes
+computational cost.
+
+\section{Strictly local equivariant attention}
+
+The attention block is local to one center and its fixed edge features. It does
+not read $\vect h_j^{(t)}$ from a sender atom. Scalar queries are generated from
+the pre-normalized center state, while keys use only scalar components of the
+fixed edge density:
+\begin{align}
+ \vect q_{ip} &= W^Q_p\,\mathrm{LN}(\vect h^{(0)}_{i,\ell=0}),\\
+ \vect k_{ijp} &= W^K_p\,\mathrm{LN}(\vect a_{ij,\ell=0}).
+\end{align}
+For head $p$, the invariant logit is
+\begin{equation}
+ s_{ijp}=\frac{\vect q_{ip}^{\mathsf T}\vect k_{ijp}}{\sqrt{d_k}}
+ +b_p(\vect B(d_{ij}))
+ -\mathrm{softplus}(\lambda_p)d_{ij},
+ \qquad \widetilde s_{ijp}=s_{ijp}/T.
+ \label{eq:logit}
+\end{equation}
+All terms are rotational invariants. The distance term is learned independently
+for each head and $T$ is the training-time attention temperature.
+
+\subsection{Cutoff-null normalization}
+
+Ordinary softmax can cancel a cutoff when the final neighbor approaches
+$r_{\mathrm c}$, because numerator and denominator vanish together. V2 adds a
+unit null/self channel:
+\begin{equation}
+ \alpha_{ijp}=
+ \frac{f_{\mathrm c}(d_{ij})\exp(\widetilde s_{ijp})}
+ {1+\sum_{k\in\calN(i)}f_{\mathrm c}(d_{ik})
+ \exp(\widetilde s_{ikp})}.
+ \label{eq:cutoff-attention}
+\end{equation}
+The code evaluates Eq.~\eqref{eq:cutoff-attention} with a per-center maximum
+subtraction for numerical stability. The null channel guarantees
+$\alpha_{ijp}\rightarrow0$ when an edge exits the neighbor list.
+
+Equivariant values are fixed-edge linear maps,
+\begin{equation}
+ \vect v_{ijp}=\mathrm{Linear}^{V}_p(\vect a_{ij}),
+\end{equation}
+and the residual update is
+\begin{equation}
+ \vect u_i=\mathrm{Linear}^{O}\!\left[
+ \frac{1}{H}\sum_{p=1}^{H}\sum_{j\in\calN(i)}
+ \alpha_{ijp}\vect v_{ijp}\right],
+ \qquad
+ \widetilde{\vect h}_i=\vect h_i^{(0)}+\vect\gamma_{\mathrm{attn}}\odot\vect u_i.
+ \label{eq:attention-update}
+\end{equation}
+Both $\alpha_{ijp}$ and $\vect a_{ij}$ contain the cutoff, so the attention
+message vanishes at least quadratically in the envelope near $r_{\mathrm c}$.
+
+\subsection{Angular feedback into scalar energy}
+
+An equivariant linear map cannot directly map $\ell>0$ values to a scalar.
+V2 therefore forms atom-local invariant squared norms after the attention
+residual:
+\begin{equation}
+ n_{ic\ell}=\sum_{m=-\ell}^{\ell}
+ \left|\widetilde h^{(\ell)}_{icm}\right|^2,
+ \qquad \ell>0.
+ \label{eq:norm}
+\end{equation}
+These invariants are concatenated with the scalar channels and passed through a
+scalar feed-forward network:
+\begin{equation}
+ \vect h_{i,0}=\widetilde{\vect h}_{i,0}
+ +\vect\gamma_{\mathrm{ffn}}\odot
+ \mathrm{MLP}_{\mathrm{ffn}}
+ \!\left(\mathrm{LN}[\widetilde{\vect h}_{i,0},\vect n_i]\right).
+ \label{eq:ffn}
+\end{equation}
+Equation~\eqref{eq:norm} lets interference among directional neighbor values
+affect energy while preserving $O(3)$ invariance. The default CsPbI$_3$ model
+uses one attention block, two heads, layer-scale initialization $10^{-2}$, and
+dropout probability $0.03$.
+
+\section{Locality, equivariance, and scaling}
+
+For each center $i$, Eqs.~\eqref{eq:edge-density}--\eqref{eq:ffn} depend only on
+$Z_i$ and the raw species and geometry of edges in $\calN(i)$. A change to an
+updated hidden state $\vect h_j$ cannot alter center $i$. Thus stacking the
+implemented attention blocks does not increase the receptive field beyond
+$r_{\mathrm c}$. The model is strictly local in the same operational sense as a
+finite-cutoff many-body potential.
+
+Spherical harmonics, equivariant linear maps, Clebsch--Gordan products, scalar
+attention weights, and invariant norms preserve the transformation law of every
+channel. The atomic energy is therefore invariant to global rotations,
+reflections, translations, and atom indexing, while its gradient transforms as
+a vector. Runtime and memory scale as
+\begin{equation}
+ \mathcal O(N\overline n\,C_{\mathrm{edge}})+\mathcal O(NC_{\mathrm{CG}}),
+\end{equation}
+where $\overline n$ is the average neighbor count. There is no iterative
+center-to-center message passing.
+
+\section{Energy, forces, and periodic stress}
+
+Only scalar channels enter the atomic-energy readout,
+\begin{equation}
+ E_i=\mathrm{MLP}_{E}(\vect h_{i,0}),\qquad
+ E=\sum_iE_i+E_{\mathrm{ref}}(\{Z_i\}).
+ \label{eq:energy}
+\end{equation}
+The readout widths are $64\rightarrow64\rightarrow1$. The reference energy is
+either a fitted per-species linear baseline or a constant mean energy per atom;
+it is independent of positions and does not change forces or stress.
+
+Forces are exact negative energy gradients,
+\begin{equation}
+ \vect F_i=-\frac{\partial E}{\partial\vect r_i}.
+ \label{eq:force}
+\end{equation}
+No direct force head is used. Consequently the force field is conservative up
+to floating-point and neighbor-list tolerances.
+
+Periodic stress is obtained by differentiating with respect to six symmetric
+strain parameters. Define
+\begin{equation}
+ \vect\epsilon(\vect\eta)=
+ \begin{pmatrix}
+ \eta_1&\eta_4&\eta_5\\
+ \eta_4&\eta_2&\eta_6\\
+ \eta_5&\eta_6&\eta_3
+ \end{pmatrix},\qquad
+ \vect F_{\epsilon}=\vect I+\vect\epsilon,
+\end{equation}
+and deform both positions and cell as row vectors,
+\begin{equation}
+ \vect r_i'=\vect r_i\vect F_{\epsilon},\qquad
+ \vect h'=\vect h\vect F_{\epsilon}.
+\end{equation}
+At zero strain, normal and shear components are reconstructed as
+\begin{align}
+ \sigma_{aa}&=\frac{1}{V}\frac{\partial E}{\partial\eta_a},
+ &&a=1,2,3,\\
+ \sigma_{xy}&=\frac{1}{2V}\frac{\partial E}{\partial\eta_4},\quad
+ \sigma_{xz}=\frac{1}{2V}\frac{\partial E}{\partial\eta_5},\quad
+ \sigma_{yz}=\frac{1}{2V}\frac{\partial E}{\partial\eta_6}.
+ \label{eq:stress}
+\end{align}
+The factor $1/2$ appears because one shear parameter changes two symmetric
+matrix entries. $V=|\det\vect h'|$ is the deformed volume. This sign convention
+matches ASE's $\sigma_{ab}=V^{-1}\partial E/\partial\epsilon_{ab}$ convention;
+ASE cell filters supply the sign required for cell forces. The v2 architecture
+retains the validated v1 stress target conversion, Voigt ordering
+$(xx,yy,zz,yz,xz,xy)$, and strain-gradient implementation unchanged.
+
+\section{Training objective}
+
+For structure $s$ with $N_s$ atoms, the supervised losses are
+\begin{align}
+ \calL_E&=\frac{1}{|\mathcal B|}\sum_{s\in\mathcal B}
+ \left[\frac{E_s-E_s^{\mathrm{DFT}}}{N_s}\right]^2,\\
+ \calL_F&=\frac{1}{\sum_s3N_s}\sum_{s,i,a}
+ \left(F_{sia}-F_{sia}^{\mathrm{DFT}}\right)^2,\\
+ \calL_\sigma&=\frac{1}{6|\mathcal B_\sigma|}
+ \sum_{s\in\mathcal B_\sigma}\sum_{v=1}^{6}
+ \left(\sigma_{sv}-\sigma_{sv}^{\mathrm{DFT}}\right)^2,\\
+ \calL&=w_E\calL_E+w_F\calL_F+w_\sigma(t)\calL_\sigma
+ +w_{\mathrm{Sob}}\calL_{\mathrm{Sob}}.
+ \label{eq:loss}
+\end{align}
+The light local linearization regularizer is
+\begin{equation}
+ \calL_{\mathrm{Sob}}=
+ \left[E(\vect r+\vect\delta)-E(\vect r)
+ +\sum_i\vect F_i\cdot\vect\delta_i\right]^2,
+ \qquad \delta_{ia}\sim\mathcal N(0,\sigma_\delta^2),
+\end{equation}
+with detached forces in this auxiliary term. The default configuration uses
+$w_E=1$, $w_F=10$, $w_\sigma:1000\rightarrow100000$ linearly over the first
+20 epochs, $w_{\mathrm{Sob}}=10^{-3}$, and $\sigma_\delta=0.02$~\AA. The stress
+ramp avoids introducing large second-derivative optimization terms at random
+initialization.
+
+Attention temperature decreases from $1.3$ to $1.0$ over 15 epochs. An optional
+force-error adaptation multiplies this schedule by
+$(\widehat{\calL}_F^{1/2}/F_{\mathrm{ref}})^\gamma$, with
+$F_{\mathrm{ref}}=0.5$~eV/\AA{} and $\gamma=-0.25$ in the supplied CsPbI$_3$
+configuration.
+
+\Needspace{8\baselineskip}
+\section{Data partitioning and optimization}
+
+Ordered molecular-dynamics frames are strongly correlated. A frame-random split
+can place adjacent configurations in training and validation, producing a
+misleading generalization estimate. The default split selects complete
+contiguous blocks of 25 frames for validation and removes a two-frame boundary
+gap from training. Model initialization, block selection, and data-loader
+shuffling use seed 42. An independent phase- and trajectory-grouped validation
+file remains preferable when metadata are available.
+
+The default optimizer is AMSGrad Adam with learning rate $10^{-3}$, weight decay
+$10^{-5}$, gradient-norm clipping at 1, and cosine decay over 100 epochs to
+$5\times10^{-5}$. Batch size is eight. Validation checkpointing begins after the
+stress ramp; \texttt{model.pt} stores the best validation loss and
+\texttt{model\_last.pt} stores the final state. Early stopping uses patience 20,
+minimum epoch 25, and minimum improvement $10^{-4}$.
+
+\section{Default CsPbI\texorpdfstring{$_3$}{3} architecture}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{>{\raggedright\arraybackslash}p{0.44\linewidth}p{0.43\linewidth}}
+\toprule
+Quantity & Value \\
+\midrule
+Cutoff / radial basis & 6.0~\AA{} / 12 Bessel functions \\
+Maximum angular degree & $\ell_{\max}=2$ \\
+Node irreps & $64\times0e+32\times1o+16\times2e$ \\
+Correlation irreps & $16\times0e+8\times1o+4\times2e$ \\
+Maximum correlation/body order & default 4; allowed 2--6 \\
+Radial network & $12\rightarrow32\rightarrow$ TP weights \\
+Attention & 1 local block, 2 heads \\
+Scalar FFN & invariant scalars and $\ell>0$ squared norms \\
+Readout & $64\rightarrow64\rightarrow1$ \\
+Trainable parameters & 132,005 \\
+Direct force/stress heads & none \\
+Long-range electrostatics & not included \\
+\bottomrule
+\end{tabular}
+\caption{Architecture-version-2 defaults used by the supplied CsPbI$_3$
+training configuration.}
+\end{table}
+
+Relative to v1, the default v2 model reduces the parameter count from 593,097
+to 132,005 by replacing the oversized radial/contraction parameterization with
+compact independent channels and one local attention block.
+
+\section{Verification and scientific use}
+
+Automated regression tests cover:
+\begin{itemize}
+  \item sensitivity of a center representation to its own species;
+  \item non-collapsed Clebsch--Gordan multiplicity channels;
+  \item internal $O(3)$ equivariance and inversion parity of ACE tensor channels;
+  \item value, first derivative, and second derivative of the cutoff;
+  \item energy and force continuity when an edge leaves the neighbor list;
+  \item rotation, translation, and atom-permutation behavior;
+  \item absence of updated sender-state dependence in attention;
+  \item finite-difference agreement for all symmetric stress components;
+  \item deterministic blocked validation splitting; and
+  \item strict loading of both legacy-v1 and versioned-v2 checkpoints.
+\end{itemize}
+
+For scientific deployment, low test RMSE is necessary but insufficient. A
+checkpoint should additionally reproduce phase-resolved errors, energy--volume
+curves, elastic constants, phonons, defect geometries, and stable $NVE/NPT$
+dynamics over the intended temperature and pressure range. Variable-cell
+relaxations are meaningful only after the stress sign, units, and finite-strain
+response have been validated against the reference electronic-structure method.
+
+\section{Limitations}
+
+The model is finite-cutoff and contains no explicit Coulomb, Ewald, charge
+equilibration, dispersion-tail, or reciprocal-space term. This is intentional
+for the present implementation. For ionic CsPbI$_3$, transferability with
+respect to cutoff, cell size, dielectric environment, charged defects, and
+long-wavelength distortions must therefore be tested explicitly. Long-range
+physics should be added only when controlled cutoff and equation-of-state tests
+demonstrate a deficiency that cannot be resolved by local data coverage.
+
+The learned compressed correlations are not a proof of ACE basis completeness.
+The current validation split reduces temporal leakage but cannot replace truly
+independent trajectories and phases. Finally, architecture-v1 and v2 checkpoints
+are not weight-compatible. Checkpoints without an
+\texttt{architecture\_version} field are evaluated by the legacy model; new
+training writes \texttt{architecture\_version: 2} and cannot resume v1 weights.
+
+\section*{Code availability and reproducibility}
+
+The implementation, training configuration, tests, and CsPbI$_3$ evaluation
+workflow are maintained at
+\url{https://github.com/paramvir3/Transformers-ACE}. The architecture equations
+in this document correspond to the version-2 classes
+\texttt{ACEV2Descriptor}, \texttt{StrictLocalEquivariantAttentionBlock}, and
+\texttt{TransformersACE}. Exact package versions and checkpoint hashes should be
+recorded for every reported result.
+
+\begin{thebibliography}{9}
+\bibitem{drautz2019}
+R. Drautz,
+``Atomic cluster expansion for accurate and transferable interatomic
+potentials,'' \emph{Physical Review B} \textbf{99}, 014104 (2019).
+\href{https://doi.org/10.1103/PhysRevB.99.014104}{doi:10.1103/PhysRevB.99.014104}.
+
+\bibitem{geiger2022}
+M. Geiger and T. Smidt,
+``e3nn: Euclidean Neural Networks,'' arXiv:2207.09453 (2022).
+\href{https://arxiv.org/abs/2207.09453}{arXiv:2207.09453}.
+
+\bibitem{musaelian2023}
+A. Musaelian, S. Batzner, A. Johansson, L. Sun, C. J. Owen,
+M. Kornbluth, and B. Kozinsky,
+``Learning local equivariant representations for large-scale atomistic
+dynamics,'' \emph{Nature Communications} \textbf{14}, 579 (2023).
+\href{https://doi.org/10.1038/s41467-023-36329-y}{doi:10.1038/s41467-023-36329-y}.
+
+\bibitem{liao2023}
+Y.-L. Liao, B. M. Wood, A. Das, and T. E. Smidt,
+``EquiformerV2: Improved Equivariant Transformer for Scaling to Higher-Degree
+Representations,'' arXiv:2306.12059 (2023).
+\href{https://arxiv.org/abs/2306.12059}{arXiv:2306.12059}.
+
+\bibitem{equivarianttensors}
+ACEsuit,
+``EquivariantTensors.jl,''
+\href{https://github.com/ACEsuit/EquivariantTensors.jl}{github.com/ACEsuit/EquivariantTensors.jl}.
+\end{thebibliography}
+
+\end{document}

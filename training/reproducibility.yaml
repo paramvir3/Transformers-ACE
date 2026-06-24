@@ -1,5 +1,5 @@
-schema_version: 1
-run_name: cspbi3_cpu_100_epoch_stress_improved
+schema_version: 2
+run_name: cspbi3_cpu_100_epoch_ace_attention_v2
 code:
   repository: https://github.com/paramvir3/Transformers-ACE
   implementation_revision: same_commit_as_this_manifest
@@ -11,13 +11,18 @@ dataset:
   sha256: 746320f0fc427346c9b368799367fd5794ecdc870565532c4ed120aecd8e399c
   frames: 979
   composition: Cs8I24Pb8
-  training_frames: 882
-  validation_frames: 97
+  training_frames: 863
+  validation_frames: 100
+  gap_excluded_frames: 16
+  split_mode: blocked
+  split_block_size: 25
+  split_gap: 2
   split_seed: 42
 
 configuration:
   path: training/config.yaml
-  sha256: 1b9a8e314d55459479ee2ff4e16453c6f5d764956db6ffd9b0fa25d9bed08b74
+  sha256: 2de3d84a825e5690226811e27d25f7819ca39a40e3f578955bfc80be2023dad1
+  architecture_version: 2
   epochs: 100
   device: cpu
   energy_weight: 1.0
@@ -25,20 +30,24 @@ configuration:
   stress_weight_start: 1000.0
   stress_weight_final: 100000.0
   stress_weight_ramp_epochs: 20
-  global_rng_seed: not_recorded
+  global_rng_seed: 42
 
 checkpoint:
   path: training/model.pt
-  sha256: 10787df0466b9e901efec8c2ef061d75e74ca785a81a0f91c84749e280769a57
-  epoch: 100
-  energy_shift_eV_per_atom: -31.85975279855302
+  architecture_version: 2
+  sha256: 5fd20ea0e15e8992f98d345445f2f33bfbc803174445843b59b3d9ba7409ddae
+  epoch: 88
+  energy_shift_eV_per_atom: -31.8566442204059
+  final_checkpoint_path: training/model_last.pt
+  final_checkpoint_sha256: 87b0044d3f4146cd8c3b50f2e81f95f09548f58090057c972cdf0b62dff5b40f
+  final_checkpoint_epoch: 100
 
 history:
   path: training/plots/training_history.csv
-  sha256: 69e4c49db41426879e873e46ce99723f374bfab0d4f319a28d52ef72ee973e61
+  sha256: b0dbb763865a641603bc219ce47c1153412fea5507f1cbaa61fc75f557a5f1dd
   epochs: 100
   curve_path: training/plots/training_curves.png
-  curve_sha256: d184d24800c3d3a60eff22d72049fa978c3ee7b31af14987f5999c930a41ce1d
+  curve_sha256: 6521ae8c297fd74cf125d0278c50ae5cbc02f1db4ecf563831cd53480d0e4563
 
 environment:
   operating_system: macOS-26.3.1-arm64
@@ -55,5 +64,5 @@ reproducibility:
   train_validation_split: deterministic
   bitwise_retraining: not_guaranteed
   reason: >-
-    The historical run fixed the random split at seed 42, but the code did not
-    record a global seed for model initialization or DataLoader shuffling.
+    Initialization, splitting, and shuffling use a recorded seed, but exact
+    floating-point reduction order can still vary across PyTorch builds and hardware.

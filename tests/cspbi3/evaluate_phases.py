@@ -3,11 +3,8 @@
 
 import argparse
 import csv
-import os
 from pathlib import Path
 import sys
-
-os.environ.setdefault("TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD", "1")
 
 import numpy as np
 from ase.filters import FrechetCellFilter

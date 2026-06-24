@@ -1,0 +1,23 @@
+units           metal
+atom_style      atomic
+boundary        p p p
+atom_modify     map array
+
+read_data       cspbi3.data
+
+pair_style      transformers_ace
+pair_coeff      * * model.transformers_ace.pt Cs Pb I
+
+timestep        0.001
+velocity        all create 300.0 12345 mom yes rot yes dist gaussian
+fix             int all nvt temp 300.0 300.0 0.1
+
+# If LAMMPS was built with PLUMED, uncomment and use your structure-factor CV file.
+# fix             plm all plumed plumedfile plumed.dat outfile plumed.out
+
+thermo_style    custom step time temp pe etotal press vol
+thermo          10
+dump            trj all custom 100 traj.lammpstrj id type x y z fx fy fz
+dump_modify     trj sort id
+
+run             10000

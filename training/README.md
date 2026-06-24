@@ -10,7 +10,9 @@ to the exact model used.
 - `plots/training_history.csv`: per-epoch train/validation metrics;
 - `plots/training_curves.png`: the corresponding learning curves;
 - `reproducibility.yaml`: hashes, versions, split details, and limitations;
-- `requirements-reproduce.txt`: pinned direct runtime dependencies.
+- `requirements.txt`: current verified runtime with e3nn 0.6.
+- `requirements-reproduce.txt`: historical dependencies for the published
+  100-epoch `l_max=2` checkpoint.
 
 The larger source trajectory, periodic checkpoints, and additional generated
 files remain ignored by Git.
@@ -18,7 +20,7 @@ files remain ignored by Git.
 Install the recorded direct dependencies inside a fresh environment:
 
 ```bash
-python -m pip install -r training/requirements-reproduce.txt
+python -m pip install -r training/requirements.txt
 python -m pip install -e .
 ```
 

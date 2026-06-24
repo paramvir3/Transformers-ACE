@@ -8,9 +8,10 @@ derivatives so they remain conservative and suitable for molecular dynamics.
 The model combines:
 
 - periodic-correct local neighbor geometry;
-- ACE radial functions, spherical harmonics, and Clebsch-Gordan contractions;
-- local attention over learned atomic states with invariant attention weights
-  and equivariant values;
+- C2-cutoff radial functions, spherical harmonics, and learned body-order-two
+  through body-order-four Clebsch-Gordan density contractions;
+- strictly local neighbor-set attention with invariant weights and equivariant
+  geometric values; updated hidden states are never sent between atom centers;
 - energy-derived forces and symmetric stress;
 - automatic train/validation plots for energy, force, stress, and total loss.
 
@@ -20,7 +21,7 @@ The model combines:
 
 ## Install
 
-Python 3.10-3.12 is recommended. Full download, virtual-environment, Apple
+Python 3.10-3.12 and the stable e3nn 0.6 series are supported. Full download, virtual-environment, Apple
 Silicon, and optional accelerator instructions are in
 [docs/INSTALL.md](docs/INSTALL.md).
 
@@ -31,6 +32,8 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e .
+
+python -c "import e3nn; print(e3nn.__version__)"
 ```
 
 The canonical Python API is `transformers_ace`. The original `flashace` import
@@ -52,6 +55,17 @@ Training saves the configured `.pt` checkpoint. By default it also writes:
 plots/training_curves.png
 plots/training_history.csv
 ```
+
+`model.pt` is the best validation checkpoint after the stress-weight ramp;
+`model_last.pt` records the final epoch. The supplied CsPbI3 configuration uses
+a deterministic blocked trajectory split so adjacent frames are not scattered
+between training and validation.
+
+The equations, locality definition, body-order convention, and checkpoint
+versioning are described in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+The complete paper-style methods section is provided as
+[LaTeX source](docs/TRANSFORMERS_ACE_METHODS.tex) and a
+[rendered PDF](output/pdf/transformers_ace_methods.pdf).
 
 For very large trajectories, stream every tenth frame without loading the full
 file into memory:
@@ -85,6 +99,22 @@ python tests/cspbi3/evaluate_phases.py \
   --model /absolute/path/to/model.pt \
   --device cpu \
   --reference minimum
+```
+
+## LAMMPS and PLUMED
+
+Native LAMMPS support is included for rare-event workflow testing. Export a
+checkpoint to TorchScript, patch/build LAMMPS with `pair_style transformers_ace`,
+and attach PLUMED as a normal LAMMPS fix. See [docs/LAMMPS.md](docs/LAMMPS.md).
+The working CsPbI3 standalone LAMMPS smoke test is in
+[`tests/run_lammps`](tests/run_lammps).
+
+```bash
+python -m transformers_ace.deploy \
+  --checkpoint training/model.pt \
+  --output model.transformers_ace.pt \
+  --type-map Cs Pb I \
+  --example-structure tests/cspbi3/structures/cubic_alpha_phase.vasp
 ```
 
 ## Compatibility

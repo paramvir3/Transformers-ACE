@@ -2,33 +2,37 @@
 train_file: "training/train.extxyz"
 valid_file: null
 val_split: 0.1
+split_mode: "blocked"
+split_block_size: 25
+split_gap: 2
+seed: 42
 model_save_path: "model.pt"
+save_last_checkpoint: true
 
 r_max: 6.0
 l_max: 2
 num_radial: 12
 hidden_dim: 64
-num_layers: 2
-descriptor_passes: 1
-descriptor_residual: true
-interleave_descriptor: false
+num_layers: 1
+architecture_version: 2
+correlation_order: 4   # allowed 2-6; increase only with enough diverse data
+correlation_channels: 16
 attention_num_heads: 2
 attention_key_dim: null
 attention_ffn_hidden: null
-attention_dropout: 0.0
+attention_dropout: 0.03
 attention_layer_scale_init: 0.01
 attention_distance_penalty: true
 radial_basis_type: "bessel"
 radial_trainable: false
-envelope_exponent: 5
 gaussian_width: 0.5
-radial_mlp_hidden: 64
+radial_mlp_hidden: 32
 radial_mlp_layers: 2
 
 epochs: 200
 batch_size: 8
 learning_rate: 0.001
-weight_decay: 0.0
+weight_decay: 0.00001
 lr_scheduler_t_max: 200
 lr_warmup_epochs: 0
 lr_warmup_start_factor: 0.1
@@ -49,6 +53,9 @@ num_workers: 0
 
 checkpoint_dir: "checkpoints"
 checkpoint_interval: 0
+early_stopping_patience: 20
+early_stopping_min_epoch: 25
+early_stopping_min_delta: 0.0001
 resume_from: null
 resume_load_optimizer: false
 resume_load_scheduler: false
