@@ -9,6 +9,7 @@ import time
 from ase.io import read
 from ase.data import atomic_numbers, chemical_symbols
 from e3nn import o3
+from flashace.checkpoint import load_checkpoint
 from flashace.model import TransformersACE
 from flashace.plotting import plot_metric_history
 from ase.neighborlist import neighbor_list
@@ -18,6 +19,13 @@ from torch.utils.data import DataLoader, Dataset
 # Disable TF32 to prevent potential TensorCore precision crashes in e3nn
 torch.backends.cuda.matmul.allow_tf32 = False
 torch.backends.cudnn.allow_tf32 = False
+
+
+def _make_grad_scaler(enabled):
+    try:
+        return torch.amp.GradScaler("cuda", enabled=enabled)
+    except (AttributeError, TypeError):
+        return torch.cuda.amp.GradScaler(enabled=enabled)
 
 
 def _load_config(config_arg: Optional[str]):
@@ -58,7 +66,11 @@ def save_checkpoint(path, epoch, model, optimizer, scheduler, scaler, config, en
             'radial_basis_type': config.get('radial_basis_type', 'bessel'),
             'radial_trainable': config.get('radial_trainable', False),
             'gaussian_width': config.get('gaussian_width', 0.5),
-            'energy_shift_per_atom': energy_shift_per_atom,
+            'energy_shift_per_atom': (
+                float(energy_shift_per_atom)
+                if energy_shift_per_atom is not None
+                else None
+            ),
             'atomic_energies': atomic_energies or {},
             'amp_dtype': config.get('amp_dtype', 'float16'),
             'use_amp': config.get('use_amp', False),
@@ -580,11 +592,11 @@ def main():
     resume_path = config.get('resume_from')
     start_epoch = 0
 
-    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+    scaler = _make_grad_scaler(use_amp)
 
     if resume_path:
         print(f"--- Loading checkpoint from {resume_path} ---")
-        checkpoint = torch.load(resume_path, map_location=device)
+        checkpoint = load_checkpoint(resume_path, map_location=device)
         checkpoint_version = int(checkpoint.get('config', {}).get('architecture_version', 1))
         if checkpoint_version != TransformersACE.architecture_version:
             raise ValueError(
@@ -651,14 +663,12 @@ def main():
 
     ckpt_interval = int(config.get('checkpoint_interval', 0) or 0)
 
-    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
-
     # Temperature curriculum for attention sharpness.
     temp_scale_start = float(config.get('temperature_scale_start', 1.0))
     temp_scale_end = float(config.get('temperature_scale_end', temp_scale_start))
     temp_scale_epochs = int(config.get('temperature_scale_epochs', 0) or 0)
 
-    def _temperature_scale(epoch_idx: int, force_ema: float | None = None):
+    def _temperature_scale(epoch_idx: int, force_ema: Optional[float] = None):
         base = temp_scale_start
         if temp_scale_epochs > 0:
             frac = min(1.0, epoch_idx / float(temp_scale_epochs))

@@ -146,7 +146,8 @@ class DenseFlashAttention(nn.Module):
         if self.layer_scale is not None and self.layer_scale_init_value is not None:
             nn.init.constant_(self.layer_scale, self.layer_scale_init_value)
     def forward(self, x, edge_index, edge_vec, edge_len, temperature_scale: float = 1.0):
-        sender, receiver = edge_index
+        sender = edge_index[0]
+        receiver = edge_index[1]
         num_nodes = x.shape[0]
         if sender.numel() == 0:
             return x

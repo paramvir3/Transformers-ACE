@@ -3,6 +3,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from e3nn import o3
 
 from flashace.calculator import TransformersACECalculator
 from flashace.model import LegacyTransformersACE, TransformersACE
@@ -85,6 +86,70 @@ def test_clebsch_gordan_multiplicity_channels_do_not_collapse():
 
     assert descriptor.contractions[0].weight.requires_grad
     assert torch.linalg.matrix_rank(scalar_channels).item() > 1
+
+
+def test_descriptor_channels_are_o3_equivariant():
+    torch.manual_seed(5)
+    descriptor = ACEV2Descriptor(
+        r_max=3.0,
+        l_max=2,
+        num_radial=4,
+        hidden_dim=16,
+        correlation_channels=8,
+    )
+    attrs = torch.randn(3, 16)
+    edge_index = torch.tensor([[1, 2, 0], [0, 0, 1]])
+    edge_vec = torch.tensor(
+        [[1.0, 0.2, 0.3], [0.1, 1.2, 0.4], [-0.5, 0.7, 0.9]],
+        dtype=torch.float32,
+    )
+    edge_len = torch.linalg.norm(edge_vec, dim=1)
+
+    output = descriptor(attrs, edge_index, edge_vec, edge_len)
+    rotation = o3.rand_matrix()
+    rotated = descriptor(attrs, edge_index, edge_vec @ rotation.T, edge_len)
+    representation = descriptor.irreps_out.D_from_matrix(rotation)
+
+    torch.testing.assert_close(rotated, output @ representation.T, rtol=1e-5, atol=1e-5)
+
+
+def test_descriptor_respects_inversion_parity():
+    torch.manual_seed(6)
+    descriptor = ACEV2Descriptor(
+        r_max=3.0,
+        l_max=3,
+        num_radial=4,
+        hidden_dim=12,
+        correlation_channels=6,
+    )
+    attrs = torch.randn(3, 12)
+    edge_index = torch.tensor([[1, 2, 0], [0, 0, 1]])
+    edge_vec = torch.tensor(
+        [[1.0, -0.2, 0.4], [-0.4, 1.2, 0.3], [0.6, 0.1, -0.8]],
+        dtype=torch.float32,
+    )
+    edge_len = torch.linalg.norm(edge_vec, dim=1)
+
+    output = descriptor(attrs, edge_index, edge_vec, edge_len)
+    inverted = descriptor(attrs, edge_index, -edge_vec, edge_len)
+    parity = descriptor.irreps_out.D_from_matrix(-torch.eye(3))
+
+    torch.testing.assert_close(inverted, output @ parity.T, rtol=1e-5, atol=1e-5)
+
+
+def test_higher_order_ace_correlations_are_available():
+    descriptor = ACEV2Descriptor(
+        r_max=3.0,
+        l_max=2,
+        num_radial=4,
+        hidden_dim=16,
+        correlation_order=5,
+        correlation_channels=8,
+    )
+
+    assert descriptor.correlation_order == 5
+    assert len(descriptor.contractions) == 3
+    assert len(descriptor.order_mix) == 4
 
 
 def test_quintic_cutoff_is_c2_at_boundary():

@@ -140,7 +140,8 @@ class LocalEquivariantAttentionBlock(nn.Module):
         edge_len: torch.Tensor,
         temperature_scale: float = 1.0,
     ) -> torch.Tensor:
-        sender, receiver = edge_index
+        sender = edge_index[0]
+        receiver = edge_index[1]
         if sender.numel() == 0:
             return x
 
@@ -357,13 +358,13 @@ class LegacyTransformersACE(nn.Module):
 
         # 3. Derivatives
         # Avoid building second-order graphs during evaluation to reduce memory.
-        grad_opts = {
-            'create_graph': training,  # only keep graph for higher-order grads when training
-            'retain_graph': training or epsilon is not None,
-            'allow_unused': True,
-        }
-
-        grads = torch.autograd.grad(E, pos, **grad_opts)[0]
+        grads = torch.autograd.grad(
+            E,
+            pos,
+            create_graph=training,  # only keep graph for higher-order grads when training
+            retain_graph=training or epsilon is not None,
+            allow_unused=True,
+        )[0]
         F = -grads if grads is not None else torch.zeros_like(pos)
         
         S = torch.zeros(3, 3, device=pos.device)
@@ -743,12 +744,13 @@ class TransformersACE(nn.Module):
         E = torch.sum(self.readout(scalars))
         aux = {}
 
-        grad_opts = {
-            'create_graph': training,
-            'retain_graph': training or epsilon is not None,
-            'allow_unused': True,
-        }
-        grads = torch.autograd.grad(E, pos, **grad_opts)[0]
+        grads = torch.autograd.grad(
+            E,
+            pos,
+            create_graph=training,
+            retain_graph=training or epsilon is not None,
+            allow_unused=True,
+        )[0]
         F = -grads if grads is not None else torch.zeros_like(pos)
 
         S = torch.zeros(3, 3, device=pos.device)

@@ -1,0 +1,7 @@
+data.NVT
+data.eq
+log.lammps
+out.*.lammpstrj
+restart.*
+restart.file
+model.transformers_ace.pt

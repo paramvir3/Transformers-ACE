@@ -4,6 +4,7 @@
 
 - macOS or Linux
 - Python 3.10-3.12
+- e3nn 0.6.x (installed automatically)
 - Git for cloning the repository
 - A C/C++ build toolchain if an optional dependency requires compilation
 
@@ -72,7 +73,7 @@ python -m pip install -e '.[accelerated]'
 ## Verify The Installation
 
 ```bash
-python -c "import torch, ase, e3nn, transformers_ace; print(torch.__version__)"
+python -c "import torch, ase, e3nn, transformers_ace; print('torch', torch.__version__); print('e3nn', e3nn.__version__)"
 python -c "from transformers_ace import TransformersACECalculator; print('installation OK')"
 ```
 
@@ -93,17 +94,14 @@ Use the actual number of CPU cores on the machine. `num_workers: 0` avoids
 macOS shared-memory issues while tensor operations still use the configured
 PyTorch threads.
 
-## Legacy PyTorch Loading Error
+## Dependency Isolation
 
-Some combinations of recent PyTorch and older trusted e3nn/checkpoint files may
-report a `weights_only` loading error. For checkpoints and dependencies from a
-trusted installation, set this before running:
-
-```bash
-export TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1
-```
-
-Do not disable safe loading for untrusted checkpoint files.
+Transformers-ACE targets the stable e3nn 0.6 API used by current NequIP. Do not
+install it into an older MACE environment that pins `e3nn==0.4.4`; use a
+separate virtual environment for each code. The Transformers-ACE checkpoint
+loader keeps PyTorch's restricted `weights_only` mode enabled and safely
+allowlists the NumPy scalar metadata present in published checkpoints, so
+`TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD` is not required.
 
 ## Uninstall Or Leave The Environment
 

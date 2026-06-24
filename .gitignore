@@ -19,6 +19,7 @@ checkpoints/
 # Published reproducibility bundle
 !training/train.extxyz
 !training/model.pt
+!tests/run_lammps/model.transformers_ace.pt
 
 # Generated training artifacts
 plots/
@@ -27,6 +28,11 @@ training/plots/
 training/plots/*
 !training/plots/training_curves.png
 !training/plots/training_history.csv
+
+# Generated document build artifacts
+output/pdf/*.aux
+output/pdf/*.log
+output/pdf/*.out
 
 # Generated CsPbI3 relaxation workspaces
 tests/cspbi3/alpha/

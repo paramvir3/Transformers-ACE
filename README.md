@@ -21,7 +21,7 @@ The model combines:
 
 ## Install
 
-Python 3.10-3.12 is recommended. Full download, virtual-environment, Apple
+Python 3.10-3.12 and the stable e3nn 0.6 series are supported. Full download, virtual-environment, Apple
 Silicon, and optional accelerator instructions are in
 [docs/INSTALL.md](docs/INSTALL.md).
 
@@ -32,6 +32,8 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e .
+
+python -c "import e3nn; print(e3nn.__version__)"
 ```
 
 The canonical Python API is `transformers_ace`. The original `flashace` import
@@ -97,6 +99,22 @@ python tests/cspbi3/evaluate_phases.py \
   --model /absolute/path/to/model.pt \
   --device cpu \
   --reference minimum
+```
+
+## LAMMPS and PLUMED
+
+Native LAMMPS support is included for rare-event workflow testing. Export a
+checkpoint to TorchScript, patch/build LAMMPS with `pair_style transformers_ace`,
+and attach PLUMED as a normal LAMMPS fix. See [docs/LAMMPS.md](docs/LAMMPS.md).
+The working CsPbI3 standalone LAMMPS smoke test is in
+[`tests/run_lammps`](tests/run_lammps).
+
+```bash
+python -m transformers_ace.deploy \
+  --checkpoint training/model.pt \
+  --output model.transformers_ace.pt \
+  --type-map Cs Pb I \
+  --example-structure tests/cspbi3/structures/cubic_alpha_phase.vasp
 ```
 
 ## Compatibility

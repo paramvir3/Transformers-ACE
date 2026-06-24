@@ -47,7 +47,7 @@ class BesselBasis(nn.Module):
         scaled = distances.unsqueeze(-1) * self.freq / self.r_max
 
         # Use the analytical limit for r -> 0 to avoid NaNs.
-        safe_dist = distances.unsqueeze(-1).clamp(min=torch.finfo(distances.dtype).eps)
+        safe_dist = distances.unsqueeze(-1).clamp(min=1e-12)
         bessel = torch.sin(scaled) / safe_dist
         bessel = torch.where(
             distances.unsqueeze(-1) == 0,
@@ -211,7 +211,8 @@ class ACE_Descriptor(nn.Module):
         self.mix = o3.Linear(self.tp_b.irreps_out, self.irreps_out)
 
     def forward(self, node_attrs, edge_index, edge_vec, edge_len):
-        sender, receiver = edge_index
+        sender = edge_index[0]
+        receiver = edge_index[1]
 
         # Stage 1: Projection
         radial_emb = self.radial_basis(edge_len)
@@ -300,7 +301,7 @@ class SmoothACERadialBasis(nn.Module):
 
 
 class ACEV2Descriptor(nn.Module):
-    """Local equivariant ACE-style density correlations through body order four.
+    """Local equivariant ACE-style density correlations.
 
     Neighbor species and geometry first form an equivariant density ``A``. Learned
     Clebsch-Gordan products recursively contract that same permutation-invariant
@@ -308,6 +309,14 @@ class ACEV2Descriptor(nn.Module):
     them with a shared vector of ones. The central species remains an explicit
     part of every atomic representation.
     """
+
+    __constants__ = [
+        "r_max",
+        "hidden_dim",
+        "correlation_order",
+        "irreps_out_dim",
+        "irreps_correlation_dim",
+    ]
 
     def __init__(
         self,
@@ -324,8 +333,8 @@ class ACEV2Descriptor(nn.Module):
         radial_mlp_layers: int = 2,
     ):
         super().__init__()
-        if correlation_order < 2 or correlation_order > 4:
-            raise ValueError("correlation_order must be between 2 and 4")
+        if correlation_order < 2 or correlation_order > 6:
+            raise ValueError("correlation_order must be between 2 and 6")
 
         self.r_max = float(r_max)
         self.hidden_dim = int(hidden_dim)
@@ -343,6 +352,8 @@ class ACEV2Descriptor(nn.Module):
         self.irreps_correlation = o3.Irreps(correlation_irreps)
         self.irreps_sh = o3.Irreps.spherical_harmonics(l_max)
         self.irreps_node = o3.Irreps(f"{hidden_dim}x0e")
+        self.irreps_out_dim = int(self.irreps_out.dim)
+        self.irreps_correlation_dim = int(self.irreps_correlation.dim)
 
         self.cutoff = SmoothPolynomialCutoff(r_max)
         self.radial_basis = SmoothACERadialBasis(
@@ -402,7 +413,8 @@ class ACEV2Descriptor(nn.Module):
         edge_vec: torch.Tensor,
         edge_len: torch.Tensor,
     ):
-        sender, receiver = edge_index
+        sender = edge_index[0]
+        receiver = edge_index[1]
         radial = self.radial_basis(edge_len)
         harmonics = self.sh(edge_vec)
         weights = self.radial_net(radial)
@@ -410,7 +422,7 @@ class ACEV2Descriptor(nn.Module):
 
         density = torch.zeros(
             node_attrs.shape[0],
-            self.irreps_correlation.dim,
+            self.irreps_correlation_dim,
             device=node_attrs.device,
             dtype=edge_features.dtype,
         )
@@ -432,7 +444,7 @@ class ACEV2Descriptor(nn.Module):
             edge_len,
         )
 
-        non_scalar_dim = self.irreps_out.dim - self.hidden_dim
+        non_scalar_dim = self.irreps_out_dim - self.hidden_dim
         center = torch.cat(
             (
                 self.center_proj(node_attrs),
@@ -443,9 +455,18 @@ class ACEV2Descriptor(nn.Module):
 
         correlation = density
         output = center + self.order_mix[0](correlation)
-        for contraction, mix in zip(self.contractions, self.order_mix[1:]):
-            correlation = contraction(correlation, density)
-            output = output + mix(correlation)
+        if self.correlation_order >= 3:
+            correlation = self.contractions[0](correlation, density)
+            output = output + self.order_mix[1](correlation)
+        if self.correlation_order >= 4:
+            correlation = self.contractions[1](correlation, density)
+            output = output + self.order_mix[2](correlation)
+        if self.correlation_order >= 5:
+            correlation = self.contractions[2](correlation, density)
+            output = output + self.order_mix[3](correlation)
+        if self.correlation_order >= 6:
+            correlation = self.contractions[3](correlation, density)
+            output = output + self.order_mix[4](correlation)
 
         if return_edge_features:
             return output, edge_features, cutoff

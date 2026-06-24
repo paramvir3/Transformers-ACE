@@ -41,7 +41,7 @@ for scalable molecular dynamics without atom-to-atom propagation of updated
 hidden states. Periodic geometry enters through shifted displacement vectors,
 chemical and angular edge densities are represented in irreducible
 representations of $O(3)$, and learned Clebsch--Gordan products produce
-correlations through maximum body order four. Attention queries depend on the
+correlations through a configurable maximum body order. Attention queries depend on the
 current center, whereas keys and equivariant values depend only on fixed local
 edge features. A compact $C^2$ cutoff and a null channel in the attention
 normalization make energy and forces continuous when an edge leaves the neighbor
@@ -169,12 +169,12 @@ with total component dimension $16+3(8)+5(4)=60$.
 \section{ACE-style body-ordered correlations}
 
 The density $\vect A_i$ is a two-body center--neighbor representation. Learned
-recursive Clebsch--Gordan products construct correlations up to maximum body
-order four:
+recursive Clebsch--Gordan products construct correlations up to configurable
+maximum body order $\nu_{\max}$:
 \begin{align}
  \vect C_i^{(2)} &= \vect A_i,\\
- \vect C_i^{(3)} &= \mathrm{TP}_{3}(\vect C_i^{(2)},\vect A_i),\\
- \vect C_i^{(4)} &= \mathrm{TP}_{4}(\vect C_i^{(3)},\vect A_i).
+ \vect C_i^{(\nu+1)} &= \mathrm{TP}_{\nu+1}(\vect C_i^{(\nu)},\vect A_i),
+ \qquad 2\leq\nu<\nu_{\max}.
  \label{eq:ace-recursion}
 \end{align}
 Each tensor product has independent learned multiplicity weights. This replaces
@@ -193,16 +193,22 @@ with component dimension $240$. The initial center state is
 \begin{equation}
  \vect h_i^{(0)}=
  \mathrm{Center}(\vect e_i)
- +\sum_{\nu=2}^{4}\mathrm{Linear}_{\nu}(\vect C_i^{(\nu)}).
+ +\sum_{\nu=2}^{\nu_{\max}}\mathrm{Linear}_{\nu}(\vect C_i^{(\nu)}).
  \label{eq:center-state}
 \end{equation}
 Only scalar slots receive the explicit center embedding. Thus $Z_i$ remains
 identifiable even if two centers have identical neighbor densities.
 
 The construction is a compressed, learned ACE density-correlation basis. It is
-not claimed to be a formally complete, untruncated linear ACE basis. Increasing
-$\ell_{\max}$, radial resolution, multiplicities, and correlation order expands
-the representation systematically but changes computational cost.
+not claimed to be a formally complete, untruncated linear ACE basis. The
+ACEsuit/EquivariantTensors.jl construction enumerates sparse many-body
+$(n,\ell,m)$ specifications, applies symmetric products, and then uses sparse
+permutation-invariant Clebsch--Gordan symmetrization maps~\cite{equivarianttensors}.
+Transformers-ACE keeps the same $O(3)$ tensor-product rules and neighbor
+permutation invariance, but uses a learned low-rank density polynomial for
+scalability. Increasing $\ell_{\max}$, radial resolution, multiplicities, and
+correlation order expands the representation systematically but changes
+computational cost.
 
 \section{Strictly local equivariant attention}
 
@@ -419,7 +425,7 @@ Cutoff / radial basis & 6.0~\AA{} / 12 Bessel functions \\
 Maximum angular degree & $\ell_{\max}=2$ \\
 Node irreps & $64\times0e+32\times1o+16\times2e$ \\
 Correlation irreps & $16\times0e+8\times1o+4\times2e$ \\
-Maximum correlation/body order & 4 \\
+Maximum correlation/body order & default 4; allowed 2--6 \\
 Radial network & $12\rightarrow32\rightarrow$ TP weights \\
 Attention & 1 local block, 2 heads \\
 Scalar FFN & invariant scalars and $\ell>0$ squared norms \\
@@ -443,6 +449,7 @@ Automated regression tests cover:
 \begin{itemize}
   \item sensitivity of a center representation to its own species;
   \item non-collapsed Clebsch--Gordan multiplicity channels;
+  \item internal $O(3)$ equivariance and inversion parity of ACE tensor channels;
   \item value, first derivative, and second derivative of the cutoff;
   \item energy and force continuity when an edge leaves the neighbor list;
   \item rotation, translation, and atom-permutation behavior;
@@ -510,6 +517,11 @@ Y.-L. Liao, B. M. Wood, A. Das, and T. E. Smidt,
 ``EquiformerV2: Improved Equivariant Transformer for Scaling to Higher-Degree
 Representations,'' arXiv:2306.12059 (2023).
 \href{https://arxiv.org/abs/2306.12059}{arXiv:2306.12059}.
+
+\bibitem{equivarianttensors}
+ACEsuit,
+``EquivariantTensors.jl,''
+\href{https://github.com/ACEsuit/EquivariantTensors.jl}{github.com/ACEsuit/EquivariantTensors.jl}.
 \end{thebibliography}
 
 \end{document}

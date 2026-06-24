@@ -39,11 +39,11 @@ A_i = sum_j a_ij.
 ```
 
 `A_i` is body order two. Learned Clebsch-Gordan tensor products recursively
-construct body-order-three and body-order-four correlations:
+construct higher body-order correlations:
 
 ```text
 C_i^(2) = A_i,
-C_i^(nu+1) = CG(C_i^(nu), A_i),       nu = 2, 3.
+C_i^(nu+1) = CG(C_i^(nu), A_i),       2 <= nu < correlation_order.
 ```
 
 Independent learned multiplicity weights are retained in every contraction.
@@ -53,8 +53,18 @@ added to an explicit central-species embedding. Changing `z_i` therefore changes
 the representation of center `i`, even when its neighbor density is unchanged.
 
 This is a compressed, learned ACE density-correlation basis with configurable
-angular and channel truncation. It does not claim formal completeness of an
-untruncated linear ACE basis.
+angular, channel, and body-order truncation. The default is body order four,
+while the implementation permits orders two through six for larger data sets.
+It does not claim formal completeness of an untruncated sparse ACE basis.
+
+ACEsuit/EquivariantTensors.jl builds a more explicit sparse symmetric ACE basis:
+it enumerates one-particle `(n, l, m)` specifications, forms symmetric products,
+then applies sparse permutation-invariant Clebsch-Gordan symmetrization maps.
+Transformers-ACE follows the same symmetry requirements through e3nn tensor
+products and compact density correlations, but keeps a learned low-rank basis for
+scalability and local attention. Regression tests check O(3) equivariance,
+inversion parity, central-species dependence, independent multiplicity channels,
+and higher body-order availability.
 
 ## Strictly local equivariant attention
 
@@ -120,6 +130,7 @@ radial basis:         12 Bessel functions
 node irreps:          64x0e + 32x1o + 16x2e
 correlation irreps:   16x0e + 8x1o + 4x2e
 maximum body order:   4
+allowed body order:   2 through 6
 attention:            1 strictly local block, 2 heads
 readout:              64 -> 64 -> 1
 trainable parameters: 132,005

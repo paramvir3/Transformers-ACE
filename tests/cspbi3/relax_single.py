@@ -2,11 +2,8 @@
 """Relax one periodic structure with a Transformers-ACE checkpoint."""
 
 import argparse
-import os
 from pathlib import Path
 import sys
-
-os.environ.setdefault("TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD", "1")
 
 import numpy as np
 from ase import Atoms

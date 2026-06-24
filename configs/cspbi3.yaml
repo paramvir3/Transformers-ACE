@@ -15,7 +15,7 @@ num_radial: 12
 hidden_dim: 64
 num_layers: 1
 architecture_version: 2
-correlation_order: 4
+correlation_order: 4   # allowed 2-6; increase only with enough diverse data
 correlation_channels: 16
 attention_num_heads: 2
 attention_key_dim: null

@@ -1,29 +1,13 @@
-import sys
-
 import torch
 import numpy as np
 from ase.calculators.calculator import Calculator, all_changes
 from ase.neighborlist import neighbor_list
+from .checkpoint import load_checkpoint
 from .model import LegacyTransformersACE, TransformersACE
 
 
 def _load_checkpoint(path, map_location):
-    """Load checkpoints saved by either NumPy 1.x or NumPy 2.x.
-
-    NumPy 2 moved its private implementation package from ``numpy.core`` to
-    ``numpy._core``. PyTorch pickles can retain that module path even though the
-    stored arrays themselves are compatible with NumPy 1.x.
-    """
-    try:
-        return torch.load(path, map_location=map_location)
-    except ModuleNotFoundError as error:
-        if error.name != "numpy._core" or hasattr(np, "_core"):
-            raise
-
-        sys.modules.setdefault("numpy._core", np.core)
-        sys.modules.setdefault("numpy._core.multiarray", np.core.multiarray)
-        sys.modules.setdefault("numpy._core.numeric", np.core.numeric)
-        return torch.load(path, map_location=map_location)
+    return load_checkpoint(path, map_location=map_location)
 
 class TransformersACECalculator(Calculator):
     """

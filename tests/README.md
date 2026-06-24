@@ -5,7 +5,8 @@ against finite differences for normal and symmetric shear strain.
 
 `test_architecture_v2.py` checks central-species retention, independent
 Clebsch-Gordan channels, C2 cutoff behavior, neighbor-list continuity,
-rotation/permutation equivariance, model size, and legacy checkpoint loading.
+internal O(3) tensor equivariance, inversion parity, rotation/permutation
+equivariance, model size, and legacy checkpoint loading.
 
 `test_data_splitting.py` checks deterministic blocked trajectory validation and
 the optional boundary gap. `test_training_stress_targets.py` preserves ASE
