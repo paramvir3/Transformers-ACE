@@ -32,7 +32,19 @@ radial_mlp_layers: 2
 epochs: 200
 batch_size: 8
 learning_rate: 0.001
+optimizer: "adam"  # Options: adam, adamw, muon
 weight_decay: 0.00001
+amsgrad: true
+muon_momentum: 0.95
+muon_ns_steps: 5
+muon_nesterov: true
+muon_parameter_mode: "hidden"  # hidden = attention/FFN matrices only; all_matrices = experimental
+muon_include: []               # Optional fnmatch patterns, e.g. ["ace.center_proj.weight"]
+muon_exclude: []               # Optional fnmatch patterns to keep on AdamW
+muon_aux_betas: [0.9, 0.95]
+muon_aux_eps: 1.0e-10
+# muon_learning_rate: 0.005
+# muon_aux_learning_rate: 0.001
 lr_scheduler_t_max: 200
 lr_warmup_epochs: 0
 lr_warmup_start_factor: 0.1
