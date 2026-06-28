@@ -11,6 +11,7 @@ from ase.data import atomic_numbers, chemical_symbols
 from e3nn import o3
 from flashace.checkpoint import load_checkpoint
 from flashace.model import TransformersACE
+from flashace.optim import build_optimizer, optimizer_group_summary
 from flashace.plotting import plot_metric_history
 from ase.neighborlist import neighbor_list
 from torch.utils.data import DataLoader, Dataset
@@ -517,10 +518,9 @@ def main():
         use_aux_stress_head=False,
     ).to(device)
     
-    optimizer = optim.Adam(
-        model.parameters(), lr=config['learning_rate'], amsgrad=True,
-        weight_decay=config.get('weight_decay', 0.0)
-    )
+    optimizer = build_optimizer(model, config)
+    print(f"Optimizer: {config.get('optimizer', 'adam')}")
+    print(f"Optimizer groups: {optimizer_group_summary(optimizer)}")
     warmup_epochs = max(0, int(config.get('lr_warmup_epochs', 0)))
     warmup_start = float(config.get('lr_warmup_start_factor', 0.1))
     scheduler_interval = str(config.get('lr_scheduler_interval', 'epoch')).lower()

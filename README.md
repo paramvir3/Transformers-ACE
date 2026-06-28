@@ -59,7 +59,10 @@ plots/training_history.csv
 `model.pt` is the best validation checkpoint after the stress-weight ramp;
 `model_last.pt` records the final epoch. The supplied CsPbI3 configuration uses
 a deterministic blocked trajectory split so adjacent frames are not scattered
-between training and validation.
+between training and validation. Set `optimizer: "muon"` in the YAML to use
+Muon on transformer hidden matrices with auxiliary AdamW for embeddings,
+readout layers, radial/tensor-product support weights, biases, normalization
+weights, and other non-hidden parameters.
 
 The equations, locality definition, body-order convention, and checkpoint
 versioning are described in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
