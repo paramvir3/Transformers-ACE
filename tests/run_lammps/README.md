@@ -1,16 +1,18 @@
 # LAMMPS CsPbI3 Tests
 
 This folder contains standalone LAMMPS tests for the native
-`pair_style transformers_ace` interface. It mirrors the workflow used by
-NequIP/Allegro/MACE-style LAMMPS plugins:
+`pair_style transformers_ace` interface:
 
 ```lammps
+newton         on
 pair_style      transformers_ace
 pair_coeff      * * ../model.transformers_ace.pt Cs Pb I
 ```
 
-The included run was tested with LAMMPS `30 Mar 2026 - Development` on one MPI
-rank using `newton off`.
+The included run was tested with LAMMPS `30 Mar 2026 - Development`. Use
+`newton on` for both single-rank and MPI runs; parallel TRACE forces rely on
+LAMMPS reverse communication to return ghost-atom force components to the
+owning ranks.
 
 ## Unbiased Smoke Test
 
@@ -29,6 +31,13 @@ Patch and build LAMMPS as described in `../../docs/LAMMPS.md`, then run:
 ```bash
 cd tests/run_lammps/test_lammps_cspbi3
 /path/to/lammps/build/lmp -in in.transformers_ace
+```
+
+For a multi-GPU run, launch one MPI rank per GPU:
+
+```bash
+cd tests/run_lammps/test_lammps_cspbi3
+mpirun -np 4 /path/to/lammps/build/lmp -in in.transformers_ace
 ```
 
 For a quick test, reduce the long NPT command in `in.transformers_ace` from
@@ -67,4 +76,5 @@ cd tests/run_lammps/test_plumed_cspbi3
 ```
 
 See `test_plumed_cspbi3/README.md` for the tracked inputs and ignored generated
-outputs.
+outputs. For production-size biased dynamics, first verify that `run 0` and a
+short unbiased trajectory match between one rank and the target MPI/GPU layout.

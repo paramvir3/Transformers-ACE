@@ -21,7 +21,7 @@ variable        seed world 1428
 
 
 mass            1 132.905  # Cs
-mass            2 204.199  # Pb
+mass            2 207.199  # Pb
 mass            3 126.900  # I
 
 pair_style      transformers_ace

@@ -5,16 +5,32 @@ Transformers-ACE has two LAMMPS routes:
 - a native `pair_style transformers_ace` for standalone LAMMPS runs;
 - a Python `fix external` bridge for rapid validation/debugging.
 
-For the NequIP/MACE-like standalone workflow, use the native pair style.
+For standalone molecular dynamics, rare-event sampling, and large systems, use
+the native pair style.
 
 ## Native Pair Style
 
 The native pair style lets a LAMMPS input use:
 
 ```lammps
+newton         on
 pair_style      transformers_ace
 pair_coeff      * * model.transformers_ace.pt Cs Pb I
 ```
+
+For GPU runs, the optional device argument is:
+
+```lammps
+pair_style      transformers_ace device auto
+pair_style      transformers_ace device cpu
+pair_style      transformers_ace device cuda
+pair_style      transformers_ace device cuda:0
+```
+
+`auto` is the production default. It uses CUDA when the LibTorch build can see
+GPUs and maps each MPI process to `local_rank % visible_gpu_count`. In cluster
+launchers, set `CUDA_VISIBLE_DEVICES` so each node exposes the GPUs assigned to
+the job.
 
 LAMMPS does not load the training checkpoint directly. First export a
 TorchScript deploy model:
@@ -179,9 +195,20 @@ The input first runs a short NVT smoke test. The following NPT section is long
 by design for production-style testing; shorten `run 50000000` to `run 1000`
 for a quick check.
 
-This first native implementation is single-MPI-rank. It is the correct first
-step for testing standalone LAMMPS MD and PLUMED rare-event workflows; MPI
-domain decomposition can be added after validation.
+For multi-GPU runs, launch one MPI rank per GPU:
+
+```bash
+cd tests/run_lammps/test_lammps_cspbi3
+mpirun -np 4 /path/to/lammps/build/lmp -in in.transformers_ace
+```
+
+The native pair style evaluates the energy only for atoms owned by the current
+MPI rank while including ghost atoms in the local neighbor graph. Gradients on
+ghost coordinates are accumulated by LAMMPS reverse communication, so
+`newton on` is required for parallel runs. Before production dynamics, compare
+`run 0` and a short trajectory between one rank and the target MPI/GPU layout.
+The total energy, forces, and virial should agree within floating-point
+tolerance.
 
 ## CsPbI3 PLUMED Delta-To-Perovskite Test
 
@@ -220,8 +247,8 @@ conservative model energy, forces, and global virial at each force evaluation.
 
 This is a validation bridge for rare-event workflow testing. It is deliberately
 single-MPI-rank at first because the current Python calculator builds its own
-periodic neighbor list. A production interface should be a compiled
-`pair_style transformers_ace` that consumes LAMMPS neighbor lists and ghost
+periodic neighbor list. For production MPI runs, use the compiled
+`pair_style transformers_ace`, which consumes LAMMPS neighbor lists and ghost
 atoms directly.
 
 ## Physics and Units
