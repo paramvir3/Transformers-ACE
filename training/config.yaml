@@ -46,7 +46,19 @@ batch_size: 8
 # Higher force focus with stable LR schedule
 learning_rate: 0.001
 # Optional optimizer and scheduler tweaks
+optimizer: "muon"                # Options: adam, adamw, muon
 weight_decay: 0.00001
+amsgrad: true
+muon_momentum: 0.95
+muon_ns_steps: 5
+muon_nesterov: true
+muon_parameter_mode: "hidden"    # Muon for transformer hidden matrices only
+muon_include: []
+muon_exclude: []
+muon_aux_betas: [0.9, 0.95]
+muon_aux_eps: 1.0e-10
+# muon_learning_rate: 0.005
+# muon_aux_learning_rate: 0.001
 lr_scheduler_t_max: 100          # One cosine decay over the requested training length
 lr_warmup_epochs: 0              # Linear warmup steps before cosine annealing
 lr_warmup_start_factor: 0.1      # Starting LR factor for warmup (fraction of base LR, must be > 0)

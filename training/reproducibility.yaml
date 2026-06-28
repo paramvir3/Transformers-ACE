@@ -1,5 +1,5 @@
-schema_version: 2
-run_name: cspbi3_cpu_100_epoch_ace_attention_v2
+schema_version: 3
+run_name: cspbi3_cpu_100_epoch_muon_ace_attention_v2
 code:
   repository: https://github.com/paramvir3/Transformers-ACE
   implementation_revision: same_commit_as_this_manifest
@@ -21,10 +21,19 @@ dataset:
 
 configuration:
   path: training/config.yaml
-  sha256: 2de3d84a825e5690226811e27d25f7819ca39a40e3f578955bfc80be2023dad1
+  sha256: ab4e178039bfba8e3511db960fac3ba79650bd35f6b263c74b6a8478f84e3ebf
   architecture_version: 2
+  l_max: 2
+  r_max: 6.0
   epochs: 100
+  batch_size: 8
   device: cpu
+  optimizer: muon
+  muon_parameter_mode: hidden
+  muon_momentum: 0.95
+  muon_newton_schulz_steps: 5
+  muon_nesterov: true
+  muon_aux_optimizer: adamw
   energy_weight: 1.0
   forces_weight: 10.0
   stress_weight_start: 1000.0
@@ -35,29 +44,45 @@ configuration:
 checkpoint:
   path: training/model.pt
   architecture_version: 2
-  sha256: 5fd20ea0e15e8992f98d345445f2f33bfbc803174445843b59b3d9ba7409ddae
-  epoch: 88
+  sha256: b44707f85aebbf2d0ed83051482c011260eefe1cda0d505d6cbabc62e9407545
+  epoch: 76
+  selection_metric: validation_loss
   energy_shift_eV_per_atom: -31.8566442204059
   final_checkpoint_path: training/model_last.pt
-  final_checkpoint_sha256: 87b0044d3f4146cd8c3b50f2e81f95f09548f58090057c972cdf0b62dff5b40f
+  final_checkpoint_sha256: ee761043e46af5641c164df154700f7bd4bbf06b955126272cc9cbc64223a82a
   final_checkpoint_epoch: 100
 
 history:
   path: training/plots/training_history.csv
-  sha256: b0dbb763865a641603bc219ce47c1153412fea5507f1cbaa61fc75f557a5f1dd
+  sha256: f3dbd783dff30e3d6ef441e51b5a64b706ec0cca972b4532fee3b17fb44c348e
   epochs: 100
+  best_validation_epoch: 76
+  best_validation_loss: 0.01773768663406372
+  final_train_loss: 0.016135938792819424
+  final_validation_loss: 0.01832939311861992
+  final_train_energy_rmse_meV_per_atom: 3.281393755242411
+  final_validation_energy_rmse_meV_per_atom: 2.437769317114902
+  final_train_force_rmse_eV_per_A: 0.03723935010704527
+  final_validation_force_rmse_eV_per_A: 0.03881809503312345
+  final_train_stress_rmse_eV_per_A3: 0.00014994091853521972
+  final_validation_stress_rmse_eV_per_A3: 0.00018041638943221914
   curve_path: training/plots/training_curves.png
-  curve_sha256: 6521ae8c297fd74cf125d0278c50ae5cbc02f1db4ecf563831cd53480d0e4563
+  curve_sha256: ab4a58b022ca353e8193e7645f734019192d4c9a9bc53a063b9711eaf32c159d
 
 environment:
   operating_system: macOS-26.3.1-arm64
   python: 3.12.13
   torch: 2.12.0
-  e3nn: 0.4.4
+  e3nn: 0.6.0
   ase: 3.28.0
   numpy: 2.4.6
   pyyaml: 6.0.3
   matplotlib: 3.11.0
+
+notes:
+  - The published checkpoint contains optimizer state and scheduler state.
+  - The checkpoint config stores model architecture and energy-shift metadata; training optimizer settings are recorded in training/config.yaml and this manifest.
+  - The larger source trajectory training_examples/muon/training_cspbi3.extxyz is intentionally not tracked.
 
 reproducibility:
   checkpoint_inference: exact_files_and_hashes_published
