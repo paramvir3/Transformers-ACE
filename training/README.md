@@ -1,18 +1,18 @@
 # Training Workspace
 
 This directory contains the macOS CPU configuration and published artifacts
-for the current 100-epoch CsPbI3 training run. The checkpoint, history, curves,
-and configuration are kept together so the reported phase tests can be traced
-to the exact model used.
+for the current 100-epoch CsPbI3 Muon training run. The checkpoint, history,
+curves, and configuration are kept together so the reported phase tests can be
+traced to the exact model used.
 
 - `train.extxyz`: the 979-frame dataset consumed by `config.yaml`;
-- `model.pt`: the trained checkpoint used for the published phase evaluation;
+- `model.pt`: the best-validation checkpoint from epoch 76;
+- `model_last.pt`: the final checkpoint from epoch 100;
 - `plots/training_history.csv`: per-epoch train/validation metrics;
 - `plots/training_curves.png`: the corresponding learning curves;
 - `reproducibility.yaml`: hashes, versions, split details, and limitations;
-- `requirements.txt`: current verified runtime with e3nn 0.6.
-- `requirements-reproduce.txt`: historical dependencies for the published
-  100-epoch `l_max=2` checkpoint.
+- `requirements.txt`: current verified runtime with e3nn 0.6;
+- `requirements-reproduce.txt`: dependencies for reproducing this Muon run.
 
 The larger source trajectory, periodic checkpoints, and additional generated
 files remain ignored by Git.
@@ -31,9 +31,11 @@ cd training
 python ../train.py --config config.yaml
 ```
 
-The default configuration reads `train.extxyz`, writes `model.pt`, and saves
-the training history and curves under `plots/`. Update the thread count in
-`config.yaml` when running on a machine with a different number of CPU cores.
+The default configuration reads `train.extxyz`, uses `optimizer: "muon"` for
+transformer hidden matrices with auxiliary AdamW for the remaining parameters,
+writes `model.pt`, and saves the training history and curves under `plots/`.
+Update the thread count in `config.yaml` when running on a machine with a
+different number of CPU cores.
 
 Verify the published dataset, configuration, checkpoint, and plots:
 
@@ -43,9 +45,8 @@ shasum -a 256 config.yaml train.extxyz model.pt \
 ```
 
 The train/validation partition is reproducible because `train.py` uses split
-seed 42. This run did not record a global model-initialization and
-batch-shuffle seed. Loading `model.pt` therefore reproduces its predictions,
-but retraining is not expected to be bit-for-bit identical. See
+seed 42. Loading `model.pt` reproduces its predictions, but retraining is not
+expected to be bit-for-bit identical across PyTorch builds or hardware. See
 `reproducibility.yaml` for the exact distinction.
 
 ## Stress And Variable Cells

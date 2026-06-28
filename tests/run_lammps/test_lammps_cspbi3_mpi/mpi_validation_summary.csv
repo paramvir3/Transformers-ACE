@@ -1,0 +1,3 @@
+run,mpi_ranks,processor_grid,atoms,steps,final_step,final_temp_K,final_potential_energy_eV,final_total_energy_eV,final_pressure,ns_per_day,timesteps_per_s,katom_step_per_s,neighbor_builds,dangerous_builds
+NVT,8,4x1x2,640,1000,1000,390.51724,-20406.852,-20374.596,5766.5936,1.924,11.133,7.125,29,0
+NPT,8,4x1x2,640,3000,3000,417.95975,-20403.25,-20368.728,-688.13792,1.985,11.490,7.354,119,0
