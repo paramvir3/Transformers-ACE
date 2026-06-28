@@ -1,7 +1,7 @@
 units	metal
 atom_style atomic
 dimension 3
-newton off
+newton on
 
 boundary p p p
 

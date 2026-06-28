@@ -70,13 +70,6 @@ The complete paper-style methods section is provided as
 [LaTeX source](docs/TRANSFORMERS_ACE_METHODS.tex) and a
 [rendered PDF](output/pdf/transformers_ace_methods.pdf).
 
-For very large trajectories, stream every tenth frame without loading the full
-file into memory:
-
-```bash
-python subsample_extxyz.py input.extxyz output_every10.extxyz --every 10
-```
-
 ## ASE Calculator
 
 ```python
@@ -111,6 +104,16 @@ checkpoint to TorchScript, patch/build LAMMPS with `pair_style transformers_ace`
 and attach PLUMED as a normal LAMMPS fix. See [docs/LAMMPS.md](docs/LAMMPS.md).
 The working CsPbI3 standalone LAMMPS smoke test is in
 [`tests/run_lammps`](tests/run_lammps).
+
+For MPI and multi-GPU runs, use `newton on` in the LAMMPS input. The native
+pair style evaluates local owned-atom energies with ghost atoms in the
+neighborhood and lets LAMMPS reverse-communicate ghost force components. With
+`pair_style transformers_ace device auto`, each MPI rank maps to
+`local_rank % visible_gpu_count`, so a typical one-node four-GPU run is:
+
+```bash
+mpirun -np 4 /path/to/lammps/build/lmp -in in.transformers_ace
+```
 
 Install PLUMED first:
 

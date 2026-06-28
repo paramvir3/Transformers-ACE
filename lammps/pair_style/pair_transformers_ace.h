@@ -38,9 +38,12 @@ class PairTransformersACE : public Pair {
   std::map<std::string, std::string> parse_metadata(const std::string &) const;
   std::vector<std::string> split_words(const std::string &) const;
   torch::Tensor cell_tensor() const;
+  int local_rank() const;
+  torch::Device resolve_device() const;
 
   torch::jit::script::Module model_;
   torch::Device device_ = torch::Device(torch::kCPU);
+  std::string device_spec_ = "auto";
   bool model_loaded_ = false;
   double cutoff_ = 0.0;
   std::vector<int64_t> lammps_type_to_z_;

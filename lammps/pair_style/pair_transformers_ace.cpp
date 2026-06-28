@@ -25,10 +25,6 @@ PairTransformersACE::PairTransformersACE(LAMMPS *lmp) : Pair(lmp)
   restartinfo = 0;
   one_coeff = 1;
   manybody_flag = 1;
-
-  if (torch::cuda::is_available()) {
-    device_ = torch::Device(torch::kCUDA, 0);
-  }
 }
 
 PairTransformersACE::~PairTransformersACE()
@@ -48,9 +44,14 @@ void PairTransformersACE::allocate()
   memory->create(cutsq, n + 1, n + 1, "pair:cutsq");
 }
 
-void PairTransformersACE::settings(int narg, char **)
+void PairTransformersACE::settings(int narg, char **arg)
 {
-  if (narg != 0) error->all(FLERR, "Illegal pair_style transformers_ace command");
+  if (narg == 0) return;
+  if (narg == 2 && strcmp(arg[0], "device") == 0) {
+    device_spec_ = arg[1];
+    return;
+  }
+  error->all(FLERR, "Illegal pair_style transformers_ace command. Use: pair_style transformers_ace [device auto|cpu|cuda|cuda:N]");
 }
 
 std::vector<std::string> PairTransformersACE::split_words(const std::string &line) const
@@ -75,6 +76,78 @@ std::map<std::string, std::string> PairTransformersACE::parse_metadata(const std
   return metadata;
 }
 
+int PairTransformersACE::local_rank() const
+{
+#if MPI_VERSION >= 3
+  MPI_Comm node_comm;
+  if (MPI_Comm_split_type(world, MPI_COMM_TYPE_SHARED, comm->me, MPI_INFO_NULL, &node_comm) ==
+      MPI_SUCCESS) {
+    int rank = 0;
+    MPI_Comm_rank(node_comm, &rank);
+    MPI_Comm_free(&node_comm);
+    return rank;
+  }
+#endif
+
+  const char *names[] = {
+      "LOCAL_RANK",
+      "OMPI_COMM_WORLD_LOCAL_RANK",
+      "MV2_COMM_WORLD_LOCAL_RANK",
+      "SLURM_LOCALID",
+      "MPI_LOCALRANKID",
+      nullptr,
+  };
+  for (const char **name = names; *name != nullptr; ++name) {
+    const char *value = std::getenv(*name);
+    if (value == nullptr || value[0] == '\0') continue;
+    char *end = nullptr;
+    const long parsed = std::strtol(value, &end, 10);
+    if (end != value && parsed >= 0) return static_cast<int>(parsed);
+  }
+  return comm->me;
+}
+
+torch::Device PairTransformersACE::resolve_device() const
+{
+  if (device_spec_ == "cpu") return torch::Device(torch::kCPU);
+
+  if (device_spec_.rfind("cuda", 0) == 0) {
+    if (!torch::cuda::is_available()) {
+      error->all(FLERR, "pair_style transformers_ace requested CUDA but LibTorch reports no CUDA device");
+    }
+    const int count = static_cast<int>(torch::cuda::device_count());
+    if (count <= 0) {
+      error->all(FLERR, "pair_style transformers_ace requested CUDA but no CUDA devices are visible");
+    }
+    int index = local_rank() % count;
+    const auto colon = device_spec_.find(':');
+    if (colon != std::string::npos) {
+      const std::string index_text = device_spec_.substr(colon + 1);
+      char *end = nullptr;
+      const long parsed = std::strtol(index_text.c_str(), &end, 10);
+      if (end == index_text.c_str() || *end != '\0') {
+        error->all(FLERR, "pair_style transformers_ace CUDA device must be written as cuda:N");
+      }
+      index = static_cast<int>(parsed);
+      if (index < 0 || index >= count) {
+        error->all(FLERR, "pair_style transformers_ace CUDA device index is outside the visible device range");
+      }
+    }
+    return torch::Device(torch::kCUDA, index);
+  }
+
+  if (device_spec_ == "auto") {
+    if (torch::cuda::is_available() && torch::cuda::device_count() > 0) {
+      const int count = static_cast<int>(torch::cuda::device_count());
+      return torch::Device(torch::kCUDA, local_rank() % count);
+    }
+    return torch::Device(torch::kCPU);
+  }
+
+  error->all(FLERR, "pair_style transformers_ace device must be auto, cpu, cuda, or cuda:N");
+  return torch::Device(torch::kCPU);
+}
+
 void PairTransformersACE::coeff(int narg, char **arg)
 {
   if (!allocated) allocate();
@@ -91,6 +164,7 @@ void PairTransformersACE::coeff(int narg, char **arg)
     for (int j = i; j <= ntypes; j++) setflag[i][j] = 0;
 
   std::string model_path(arg[2]);
+  device_ = resolve_device();
   torch::jit::ExtraFilesMap extra_files;
   extra_files["metadata.txt"] = "";
   try {
@@ -146,8 +220,8 @@ void PairTransformersACE::coeff(int narg, char **arg)
 void PairTransformersACE::init_style()
 {
   if (!model_loaded_) error->all(FLERR, "pair_coeff must be set before pair_style transformers_ace");
-  if (comm->nprocs != 1) {
-    error->all(FLERR, "This first pair_style transformers_ace implementation is single-MPI-rank only");
+  if (comm->nprocs > 1 && !force->newton_pair) {
+    error->all(FLERR, "parallel pair_style transformers_ace requires 'newton on' so ghost-atom forces are reverse-communicated");
   }
   if (atom->tag_enable == 0) error->all(FLERR, "pair_style transformers_ace requires atom IDs");
   neighbor->add_request(this, NeighConst::REQ_FULL | NeighConst::REQ_GHOST);
@@ -185,15 +259,18 @@ void PairTransformersACE::compute(int eflag, int vflag)
   int *type = atom->type;
   tagint *tag = atom->tag;
 
-  std::unordered_map<tagint, int> local_by_tag;
-  local_by_tag.reserve(nlocal);
-  for (int i = 0; i < nlocal; i++) local_by_tag[tag[i]] = i;
+  std::vector<int> force_owner;
+  if (comm->nprocs == 1) {
+    std::unordered_map<tagint, int> local_by_tag;
+    local_by_tag.reserve(nlocal);
+    for (int i = 0; i < nlocal; i++) local_by_tag[tag[i]] = i;
 
-  std::vector<int> force_owner(nall, -1);
-  for (int i = 0; i < nlocal; i++) force_owner[i] = i;
-  for (int i = nlocal; i < nall; i++) {
-    auto found = local_by_tag.find(tag[i]);
-    if (found != local_by_tag.end()) force_owner[i] = found->second;
+    force_owner.assign(nall, -1);
+    for (int i = 0; i < nlocal; i++) force_owner[i] = i;
+    for (int i = nlocal; i < nall; i++) {
+      auto found = local_by_tag.find(tag[i]);
+      if (found != local_by_tag.end()) force_owner[i] = found->second;
+    }
   }
 
   std::vector<int64_t> senders;
@@ -273,12 +350,20 @@ void PairTransformersACE::compute(int eflag, int vflag)
   torch::Tensor strain_grad = grads[1].to(torch::kCPU);
 
   auto force_acc = forces.accessor<float, 2>();
-  for (int i = 0; i < nall; i++) {
-    const int owner = force_owner[i];
-    if (owner < 0) continue;
-    f[owner][0] += force_acc[i][0];
-    f[owner][1] += force_acc[i][1];
-    f[owner][2] += force_acc[i][2];
+  if (comm->nprocs == 1) {
+    for (int i = 0; i < nall; i++) {
+      const int owner = force_owner[i];
+      if (owner < 0) continue;
+      f[owner][0] += force_acc[i][0];
+      f[owner][1] += force_acc[i][1];
+      f[owner][2] += force_acc[i][2];
+    }
+  } else {
+    for (int i = 0; i < nall; i++) {
+      f[i][0] += force_acc[i][0];
+      f[i][1] += force_acc[i][1];
+      f[i][2] += force_acc[i][2];
+    }
   }
 
   eng_vdwl = energy.detach().to(torch::kCPU).item<double>();

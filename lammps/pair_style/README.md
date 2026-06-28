@@ -8,6 +8,28 @@ pair_style  transformers_ace
 pair_coeff  * * model.transformers_ace.pt Cs Pb I
 ```
 
+For MPI or multi-GPU runs, keep LAMMPS `newton on` so force contributions on
+ghost atoms are reverse-communicated to their owning ranks:
+
+```lammps
+newton      on
+pair_style  transformers_ace
+pair_coeff  * * model.transformers_ace.pt Cs Pb I
+```
+
+The optional device selector is:
+
+```lammps
+pair_style  transformers_ace device auto
+pair_style  transformers_ace device cpu
+pair_style  transformers_ace device cuda
+pair_style  transformers_ace device cuda:0
+```
+
+`auto` uses CUDA when LibTorch sees GPUs and maps each MPI process to
+`local_rank % visible_gpu_count`. Set `CUDA_VISIBLE_DEVICES` in the launcher to
+control which GPUs are visible on each node.
+
 The pair style loads an exported TorchScript energy model. It does not use
 Python during molecular dynamics.
 
@@ -75,6 +97,13 @@ cd /path/to/Transformers-ACE/tests/run_lammps/test_lammps_cspbi3
 /path/to/lammps/build/lmp -in in.transformers_ace
 ```
 
-The first implementation is intentionally single-MPI-rank. It is meant to
-validate the native LAMMPS route and PLUMED workflow before adding MPI domain
-decomposition support.
+For a multi-GPU node with one MPI rank per GPU:
+
+```bash
+mpirun -np 4 /path/to/lammps/build/lmp -in in.transformers_ace
+```
+
+Before production dynamics, compare `run 0` or a short NVE trajectory between
+one rank and multiple ranks. Energies, forces, and virials should agree within
+floating-point tolerance; larger differences usually indicate a neighbor-skin,
+Newton, or GPU visibility problem.
